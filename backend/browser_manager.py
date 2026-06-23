@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import os
+import signal
 import socket
 import time
 from dataclasses import dataclass
@@ -17,6 +19,8 @@ from cloakbrowser import launch_persistent_context_async
 from .vnc_manager import VNCManager
 
 logger = logging.getLogger("cloakbrowser.manager.browser")
+
+CHROME_RESTORE_LAST_SESSION = 1
 
 
 def _normalize_proxy(raw: str) -> str:
@@ -142,8 +146,119 @@ def _init_profile_defaults(user_data_dir: Path) -> None:
         logger.info("Set DuckDuckGo as default search for %s", user_data_dir.name)
 
 
+def _restore_last_session_enabled(profile: dict[str, Any]) -> bool:
+    value = profile.get("restore_last_session", True)
+    return True if value is None else bool(value)
+
+
+def _configure_session_restore(user_data_dir: Path, restore_last_session: bool) -> None:
+    """Set Chrome startup preference without touching fingerprint settings."""
+    default_dir = user_data_dir / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    prefs_path = default_dir / "Preferences"
+
+    prefs: dict[str, Any] = {}
+    if prefs_path.exists():
+        try:
+            content = prefs_path.read_text().strip()
+            prefs = json.loads(content) if content else {}
+        except json.JSONDecodeError as exc:
+            logger.warning("Skipping session restore preference for %s: %s", user_data_dir.name, exc)
+            return
+
+    session = prefs.setdefault("session", {})
+    if restore_last_session:
+        session["restore_on_startup"] = CHROME_RESTORE_LAST_SESSION
+    elif session.get("restore_on_startup") == CHROME_RESTORE_LAST_SESSION:
+        session.pop("restore_on_startup", None)
+        if not session:
+            prefs.pop("session", None)
+
+    prefs_path.write_text(json.dumps(prefs, indent=2))
+
+
 BASE_CDP_PORT = 5100
 CDP_PORT_RANGE = 100  # cycle through 5100-5199 to avoid TIME_WAIT collisions
+
+
+def _read_proc_cmdline(pid: int) -> str:
+    try:
+        return (Path("/proc") / str(pid) / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _read_proc_ppid(pid: int) -> int | None:
+    try:
+        status = (Path("/proc") / str(pid) / "status").read_text()
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("PPid:"):
+            with suppress(ValueError):
+                return int(line.split()[1])
+            return None
+    return None
+
+
+def _direct_child_pids() -> set[int]:
+    parent_pid = os.getpid()
+    children: set[int] = set()
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return children
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if _read_proc_ppid(pid) == parent_pid:
+            children.add(pid)
+    return children
+
+
+def _descendant_pids(root_pids: set[int]) -> set[int]:
+    descendants: set[int] = set()
+    pending = set(root_pids)
+    while pending:
+        parents = pending | descendants
+        found: set[int] = set()
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            if pid in parents:
+                continue
+            if _read_proc_ppid(pid) in parents:
+                found.add(pid)
+        pending = found - descendants
+        descendants.update(found)
+    return descendants
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _reap_exited_children() -> int:
+    reaped = 0
+    while True:
+        try:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            break
+        except OSError as exc:
+            logger.debug("Child process reap failed: %s", exc)
+            break
+        if pid == 0:
+            break
+        reaped += 1
+    return reaped
 
 
 @dataclass
@@ -161,6 +276,7 @@ class BrowserManager:
         self._launching: set[str] = set()  # profile IDs currently being launched
         self.vnc = VNCManager()
         self._lock = asyncio.Lock()
+        self._process_launch_lock = asyncio.Lock()
         self._next_cdp_port = BASE_CDP_PORT
         self._auto_launch_task: asyncio.Task | None = None
 
@@ -191,6 +307,12 @@ class BrowserManager:
 
         # Set up bookmarks and search engine on first launch
         _init_profile_defaults(user_data_dir)
+        restore_last_session = _restore_last_session_enabled(profile)
+        _configure_session_restore(user_data_dir, restore_last_session)
+
+        context: Any | None = None
+        children_before_launch: set[int] = set()
+        launch_started = False
 
         try:
             # Start KasmVNC on the allocated display
@@ -204,6 +326,8 @@ class BrowserManager:
             # Build fingerprint args from profile settings
             extra_args = self._build_fingerprint_args(profile)
             extra_args += profile.get("launch_args") or []
+            if restore_last_session:
+                extra_args.append("--restore-last-session")
             extra_args.append(f"--remote-debugging-port={cdp_port}")
 
             # Normalize proxy format (host:port:user:pass → http://user:pass@host:port)
@@ -212,49 +336,55 @@ class BrowserManager:
             if proxy:
                 _validate_proxy(proxy)
 
-            # Launch CloakBrowser on that display
-            # DISPLAY is passed via env kwarg to avoid process-wide os.environ mutation
-            context = await launch_persistent_context_async(
-                user_data_dir=profile["user_data_dir"],
-                headless=bool(profile.get("headless", False)),
-                proxy=proxy,
-                args=extra_args,
-                timezone=profile.get("timezone") or None,
-                locale=profile.get("locale") or None,
-                humanize=bool(profile.get("humanize", False)),
-                human_preset=profile.get("human_preset", "default"),
-                geoip=bool(profile.get("geoip", False)),
-                color_scheme=profile.get("color_scheme") or None,
-                user_agent=profile.get("user_agent") or None,
-                viewport={
-                    "width": profile.get("screen_width", 1920),
-                    "height": profile.get("screen_height", 1080) - 133,
-                },
-                env={**os.environ, "DISPLAY": f":{display}"},
-            )
+            # Launch CloakBrowser on that display. Keep the process snapshot and
+            # launch call serialized so a failed launch can clean only its own
+            # Playwright/Chrome children.
+            async with self._process_launch_lock:
+                children_before_launch = _direct_child_pids()
+                launch_started = True
+                # DISPLAY is passed via env kwarg to avoid process-wide os.environ mutation
+                context = await launch_persistent_context_async(
+                    user_data_dir=profile["user_data_dir"],
+                    headless=bool(profile.get("headless", False)),
+                    proxy=proxy,
+                    args=extra_args,
+                    timezone=profile.get("timezone") or None,
+                    locale=profile.get("locale") or None,
+                    humanize=bool(profile.get("humanize", False)),
+                    human_preset=profile.get("human_preset", "default"),
+                    geoip=bool(profile.get("geoip", False)),
+                    color_scheme=profile.get("color_scheme") or None,
+                    user_agent=profile.get("user_agent") or None,
+                    viewport={
+                        "width": profile.get("screen_width", 1920),
+                        "height": profile.get("screen_height", 1080) - 133,
+                    },
+                    env={**os.environ, "DISPLAY": f":{display}"},
+                )
 
-            # Inject clipboard listener: captures copied text on every page
-            # so the GET /clipboard endpoint can read it via page.evaluate()
-            _clipboard_init_js = """
-                window.__clipboardText = '';
-                document.addEventListener('copy', () => {
-                    const sel = window.getSelection();
-                    if (sel) window.__clipboardText = sel.toString();
-                });
-                document.addEventListener('keydown', (e) => {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.altKey && !e.shiftKey) {
+            if bool(profile.get("clipboard_sync", False)):
+                # Continuous VNC->host clipboard sync needs a page listener.
+                # One-time host->VNC paste uses X clipboard and does not need this.
+                _clipboard_init_js = """
+                    window.__clipboardText = '';
+                    document.addEventListener('copy', () => {
                         const sel = window.getSelection();
-                        if (sel && sel.toString()) window.__clipboardText = sel.toString();
-                    }
-                });
-            """
-            await context.add_init_script(_clipboard_init_js)
-            # Also inject into already-open pages (about:blank created before init_script)
-            for p in context.pages:
-                try:
-                    await p.evaluate(_clipboard_init_js)
-                except Exception as exc:
-                    logger.debug("Clipboard init failed on existing page: %s", exc)
+                        if (sel) window.__clipboardText = sel.toString();
+                    });
+                    document.addEventListener('keydown', (e) => {
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.altKey && !e.shiftKey) {
+                            const sel = window.getSelection();
+                            if (sel && sel.toString()) window.__clipboardText = sel.toString();
+                        }
+                    });
+                """
+                await context.add_init_script(_clipboard_init_js)
+                # Also inject into already-open pages (about:blank created before init_script)
+                for p in context.pages:
+                    try:
+                        await p.evaluate(_clipboard_init_js)
+                    except Exception as exc:
+                        logger.debug("Clipboard init failed on existing page: %s", exc)
 
             running = RunningProfile(
                 profile_id=profile_id,
@@ -283,6 +413,13 @@ class BrowserManager:
         except BaseException:
             async with self._lock:
                 self._launching.discard(profile_id)
+            if context is not None:
+                await self._close_context(
+                    RunningProfile(profile_id, context, display, ws_port, cdp_port),
+                    profile_id,
+                )
+            elif launch_started:
+                await self._cleanup_failed_launch(user_data_dir, cdp_port, children_before_launch)
             await self.vnc.stop_vnc(display)
             raise
 
@@ -293,7 +430,64 @@ class BrowserManager:
 
         if running:
             logger.info("Browser closed for profile %s, cleaning up", profile_id)
+            await self._close_context(running, profile_id)
             await self.vnc.stop_vnc(running.display)
+
+    async def _close_context(self, running: RunningProfile, profile_id: str):
+        """Close the Playwright context so the wrapped Playwright driver stops too."""
+        try:
+            await running.context.close()
+        except Exception as exc:
+            logger.warning("Error closing context for %s: %s", profile_id, exc)
+        finally:
+            reaped = _reap_exited_children()
+            if reaped:
+                logger.debug("Reaped %d exited child process(es) after closing %s", reaped, profile_id)
+
+    async def _cleanup_failed_launch(
+        self,
+        user_data_dir: Path,
+        cdp_port: int,
+        children_before_launch: set[int],
+    ):
+        """Clean Playwright/Chrome children left behind when launch raises before returning a context."""
+        current_children = _direct_child_pids()
+        new_children = current_children - children_before_launch
+        user_data_arg = f"--user-data-dir={user_data_dir}"
+        cdp_arg = f"--remote-debugging-port={cdp_port}"
+
+        candidates: set[int] = set()
+        for pid in current_children:
+            cmdline = _read_proc_cmdline(pid)
+            if user_data_arg in cmdline or cdp_arg in cmdline:
+                candidates.add(pid)
+                continue
+            if pid in new_children and (
+                "playwright/driver" in cmdline
+                or "chrome" in cmdline
+                or "chrome_crashpad" in cmdline
+            ):
+                candidates.add(pid)
+
+        candidates |= _descendant_pids(candidates)
+        if candidates:
+            logger.warning(
+                "Cleaning up %d child process(es) left by failed launch on CDP port %d",
+                len(candidates),
+                cdp_port,
+            )
+            for pid in sorted(candidates, reverse=True):
+                with suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGTERM)
+            await asyncio.sleep(0.5)
+            for pid in sorted(candidates, reverse=True):
+                if _pid_exists(pid):
+                    with suppress(ProcessLookupError):
+                        os.kill(pid, signal.SIGKILL)
+
+        reaped = _reap_exited_children()
+        if reaped:
+            logger.debug("Reaped %d exited child process(es) after failed launch cleanup", reaped)
 
     async def stop(self, profile_id: str):
         """Stop a running browser instance."""
@@ -306,11 +500,7 @@ class BrowserManager:
 
         logger.info("Stopping profile %s", profile_id)
 
-        try:
-            await running.context.close()
-        except Exception as exc:
-            logger.warning("Error closing context for %s: %s", profile_id, exc)
-
+        await self._close_context(running, profile_id)
         await self.vnc.stop_vnc(running.display)
 
     def get_status(self, profile_id: str) -> dict[str, Any]:
@@ -344,7 +534,7 @@ class BrowserManager:
         from . import database as db
 
         profiles = db.list_profiles()
-        auto_profiles = [p for p in profiles if p.get("auto_launch")]
+        auto_profiles = [p for p in profiles if p.get("auto_launch") and not p.get("is_archived")]
         if not auto_profiles:
             logger.info("No profiles configured for auto-launch")
             return

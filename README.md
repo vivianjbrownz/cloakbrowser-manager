@@ -11,7 +11,7 @@ Free, self-hosted alternative to Multilogin, GoLogin, and AdsPower.
 
 <p align="center">
 <a href="https://github.com/CloakHQ/CloakBrowser"><img src="https://img.shields.io/github/stars/cloakhq/cloakbrowser?label=CloakBrowser" alt="Stars"></a>
-<a href="https://hub.docker.com/r/cloakhq/cloakbrowser-manager"><img src="https://img.shields.io/docker/pulls/cloakhq/cloakbrowser-manager?label=docker&logo=docker&logoColor=white" alt="Docker Pulls"></a>
+<a href="https://github.com/stevenbbrooksz/cloakbrowser-manager/pkgs/container/cloakbrowser-manager"><img src="https://img.shields.io/badge/container-ghcr.io-blue?logo=github" alt="Container"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
@@ -25,21 +25,74 @@ Free, self-hosted alternative to Multilogin, GoLogin, and AdsPower.
 
 Each profile is an isolated CloakBrowser instance with its own fingerprint, proxy, cookies, and session data. Profiles persist across restarts. Everything runs in one Docker container.
 
-```bash
-docker run -p 8080:8080 -v cloakprofiles:/data cloakhq/cloakbrowser-manager
+## BeginOS Inventory Build
+
+This working tree is a custom BeginOS build of CloakBrowser Manager. It keeps the upstream browser profile features and adds an Inventory table for operating dozens of profiles and social account records.
+
+The deployed production image is:
+
+```text
+ghcr.io/stevenbbrooksz/cloakbrowser-manager:inventory-20260623
 ```
+
+Inventory behavior:
+
+- The Inventory table is the default main view after login.
+- The Manager UI supports `System`, `Light`, and `Dark` panel themes stored in local browser storage.
+- One browser profile can have multiple account asset records.
+- Profiles with no account assets appear as profile-only rows.
+- Account asset statuses are `new`, `warming`, `active`, `limited`, `blocked`, and `retired`.
+- Retired accounts are hidden by default.
+- Passwords, 2FA secrets, TOTP seeds, and recovery codes are intentionally not stored.
+- CSV import rejects sensitive columns such as `password`, `2fa_secret`, `totp`, and `recovery_code`.
+
+Inventory API:
+
+```text
+GET    /api/inventory/rows?include_retired=false
+GET    /api/inventory/export.csv
+POST   /api/inventory/import.csv?dry_run=true|false
+POST   /api/profiles/{profile_id}/accounts
+PUT    /api/accounts/{account_id}
+DELETE /api/accounts/{account_id}
+```
+
+CSV columns:
+
+```text
+profile_id,profile_name,proxy,account_id,platform,account_identifier,email_or_phone,account_status,platform_status_detail,purpose,last_used_at,notes,tags
+```
+
+Import matching rules:
+
+- Existing rows with `account_id` are updated when the account belongs to `profile_id`.
+- Rows without `account_id` match by `(profile_id, platform, account_identifier)`.
+- Unknown `profile_id` rows are rejected.
+- Run `dry_run=true` before applying imports.
+
+### Install with Docker
+
+```bash
+docker run -d --name cloakbrowser-manager \
+  -p 127.0.0.1:8080:8080 \
+  -v cloakprofiles:/data \
+  -e AUTH_TOKEN='replace-with-a-long-random-token' \
+  ghcr.io/stevenbbrooksz/cloakbrowser-manager:inventory-20260623
+```
+
+Keep the `127.0.0.1` binding when you expose the Manager through SSH tunneling or a HTTPS reverse proxy. Only bind directly to a public interface if you have network controls and HTTPS in front of it.
 
 Or build from source:
 
 ```bash
-git clone https://github.com/CloakHQ/CloakBrowser-Manager.git
-cd CloakBrowser-Manager
+git clone https://github.com/stevenbbrooksz/cloakbrowser-manager.git
+cd cloakbrowser-manager
 docker compose up --build
 ```
 
 Open [http://localhost:8080](http://localhost:8080) in your browser. Create a profile. Click Launch. Done.
 
-> **Early alpha** — this project is under active development. Expect bugs. If you find one, please [open an issue](https://github.com/CloakHQ/CloakBrowser-Manager/issues).
+> **Early alpha** — this project is under active development. Expect bugs. If you find one, please [open an issue](https://github.com/stevenbbrooksz/cloakbrowser-manager/issues).
 
 ## Why Not Just Use a VPN?
 
@@ -106,15 +159,35 @@ docker compose up --build
 
 ## Updating
 
-Pull the latest image and restart:
+For this BeginOS Inventory build, pull the latest published image and recreate the container:
 
 ```bash
-docker pull cloakhq/cloakbrowser-manager
-docker stop <container-id>
-docker run -p 8080:8080 -v cloakprofiles:/data cloakhq/cloakbrowser-manager
+docker pull ghcr.io/stevenbbrooksz/cloakbrowser-manager:inventory-20260623
+docker stop cloakbrowser-manager
+docker rm cloakbrowser-manager
+docker run -d --name cloakbrowser-manager \
+  -p 127.0.0.1:8080:8080 \
+  -v cloakprofiles:/data \
+  -e AUTH_TOKEN='replace-with-the-existing-token' \
+  ghcr.io/stevenbbrooksz/cloakbrowser-manager:inventory-20260623
 ```
 
 Your profiles and session data are stored in the `cloakprofiles` volume and persist across updates.
+
+Do not deploy upstream `cloakhq/cloakbrowser-manager:latest` unless you intentionally want to remove the Inventory feature. When maintaining this custom build:
+
+1. Back up `/opt/cloakbrowser-manager/.env` and the `cloakprofiles` Docker volume.
+2. Merge upstream changes into this custom working tree.
+3. Run backend and frontend tests.
+4. Build a dated image tag:
+
+```bash
+docker build --build-arg TARGETARCH=amd64 \
+  -t ghcr.io/stevenbbrooksz/cloakbrowser-manager:inventory-YYYYMMDD .
+```
+
+5. Recreate the container with the same `AUTH_TOKEN` and `cloakprofiles:/data` volume.
+6. Verify `/api/status`, `/api/inventory/rows`, CSV export, and one profile launch.
 
 ## Automation API
 
@@ -158,7 +231,10 @@ Then open `http://localhost:8080`.
 By default, there is no authentication (ideal for local use). To protect the web UI and API when hosting on a network, set the `AUTH_TOKEN` environment variable:
 
 ```bash
-docker run -p 8080:8080 -v cloakprofiles:/data -e AUTH_TOKEN=your-secret-token cloakhq/cloakbrowser-manager
+docker run -p 127.0.0.1:8080:8080 \
+  -v cloakprofiles:/data \
+  -e AUTH_TOKEN=your-secret-token \
+  ghcr.io/stevenbbrooksz/cloakbrowser-manager:inventory-20260623
 ```
 
 Or in `docker-compose.yml`:
@@ -186,11 +262,13 @@ The GUI application requires the CloakBrowser Chromium binary to function. The b
 
 ## Contributing
 
-Contributions are welcome. Please [open an issue](https://github.com/CloakHQ/CloakBrowser-Manager/issues) first to discuss what you'd like to change.
+Contributions are welcome. Please [open an issue](https://github.com/stevenbbrooksz/cloakbrowser-manager/issues) first to discuss what you'd like to change.
 
 ## Links
 
 - **CloakBrowser** — [github.com/CloakHQ/CloakBrowser](https://github.com/CloakHQ/CloakBrowser)
+- **BeginOS Inventory build** — [github.com/stevenbbrooksz/cloakbrowser-manager](https://github.com/stevenbbrooksz/cloakbrowser-manager)
+- **Upstream Manager** — [github.com/CloakHQ/CloakBrowser-Manager](https://github.com/CloakHQ/CloakBrowser-Manager)
 - **Website** — [cloakbrowser.dev](https://cloakbrowser.dev)
-- **Bug reports** — [GitHub Issues](https://github.com/CloakHQ/CloakBrowser-Manager/issues)
+- **Bug reports** — [GitHub Issues](https://github.com/stevenbbrooksz/cloakbrowser-manager/issues)
 - **Contact** — cloakhq@pm.me

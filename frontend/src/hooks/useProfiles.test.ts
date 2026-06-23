@@ -9,6 +9,8 @@ vi.mock("../lib/api", () => ({
     createProfile: vi.fn(),
     updateProfile: vi.fn(),
     deleteProfile: vi.fn(),
+    archiveProfile: vi.fn(),
+    restoreProfile: vi.fn(),
     launchProfile: vi.fn(),
     stopProfile: vi.fn(),
   },
@@ -21,6 +23,8 @@ const mockApi = api as {
   createProfile: ReturnType<typeof vi.fn>;
   updateProfile: ReturnType<typeof vi.fn>;
   deleteProfile: ReturnType<typeof vi.fn>;
+  archiveProfile: ReturnType<typeof vi.fn>;
+  restoreProfile: ReturnType<typeof vi.fn>;
   launchProfile: ReturnType<typeof vi.fn>;
   stopProfile: ReturnType<typeof vi.fn>;
 };
@@ -44,7 +48,12 @@ const fakeProfile = {
   headless: false,
   geoip: false,
   clipboard_sync: true,
+  auto_launch: false,
+  restore_last_session: true,
+  is_archived: false,
+  archived_at: null,
   color_scheme: null,
+  launch_args: [],
   notes: null,
   user_data_dir: "/data/profiles/abc-123",
   created_at: "2026-01-01T00:00:00Z",
@@ -117,6 +126,36 @@ describe("useProfiles", () => {
     });
 
     expect(result.current.profiles).toHaveLength(0);
+  });
+
+  it("archive updates profile state in list", async () => {
+    const archived = { ...fakeProfile, is_archived: true, archived_at: "2026-06-05T00:00:00Z" };
+    mockApi.archiveProfile.mockResolvedValue(archived);
+
+    const { result } = renderHook(() => useProfiles());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.archive("abc-123");
+    });
+
+    expect(result.current.profiles[0].is_archived).toBe(true);
+    expect(result.current.profiles[0].archived_at).toBe("2026-06-05T00:00:00Z");
+  });
+
+  it("restore updates profile state in list", async () => {
+    mockApi.listProfiles.mockResolvedValue([{ ...fakeProfile, is_archived: true, archived_at: "2026-06-05T00:00:00Z" }]);
+    mockApi.restoreProfile.mockResolvedValue(fakeProfile);
+
+    const { result } = renderHook(() => useProfiles());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.restore("abc-123");
+    });
+
+    expect(result.current.profiles[0].is_archived).toBe(false);
+    expect(result.current.profiles[0].archived_at).toBeNull();
   });
 
   it("sets error on fetch failure", async () => {

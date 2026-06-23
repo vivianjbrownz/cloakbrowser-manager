@@ -9,6 +9,10 @@ RUN npm run build
 # Stage 2: Production image
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.source="https://github.com/stevenbbrooksz/cloakbrowser-manager"
+LABEL org.opencontainers.image.description="BeginOS inventory build of CloakBrowser Manager"
+LABEL org.opencontainers.image.licenses="MIT"
+
 # Chromium system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -19,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 libgtk-3-0 libpangocairo-1.0-0 libcairo-gobject2 \
     libgdk-pixbuf-2.0-0 libxss1 libxtst6 fonts-liberation \
     libgl1-mesa-dri libegl-mesa0 \
-    procps wget ca-certificates xclip \
+    procps wget ca-certificates xclip tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Playwright system deps (matches test-infra)
@@ -64,4 +68,4 @@ VOLUME /data
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["tini", "--", "/entrypoint.sh"]

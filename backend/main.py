@@ -7,12 +7,14 @@ for browser profile management with live VNC viewing.
 from __future__ import annotations
 
 import asyncio
+import csv
 import hmac
+import io
 import logging
 import os
 import struct
 import shutil
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,22 +22,43 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 import starlette.requests
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import database as db
+from . import research
 from .browser_manager import BrowserManager
 from .models import (
+    AccountAssetCreate,
+    AccountAssetResponse,
+    AccountAssetUpdate,
     ClipboardRequest,
+    ContentOpportunityCreate,
+    ContentOpportunityResponse,
+    ContentOpportunityUpdate,
+    CsvImportResult,
     LaunchResponse,
     LoginRequest,
+    ProfileOpenUrlRequest,
     ProfileCreate,
     ProfileResponse,
     ProfileStatusResponse,
     ProfileUpdate,
+    InventoryRowResponse,
+    ResearchDomainBulkCreate,
+    ResearchDomainCreate,
+    ResearchDomainResponse,
+    ResearchDomainUpdate,
+    ResearchImportResult,
+    ResearchKeywordResponse,
+    ResearchKeywordTaskCreate,
+    ResearchKeywordUpdate,
+    ResearchProviderConfigResponse,
     StatusResponse,
     TagResponse,
+    WaybackSignalsResponse,
 )
 
 logger = logging.getLogger("cloakbrowser.manager")
@@ -176,8 +199,43 @@ class AuthMiddleware:
 # Singleton browser manager
 browser_mgr = BrowserManager()
 
+_CHILD_REAPER_INTERVAL_SECONDS = 30
+_child_reaper_task: asyncio.Task | None = None
+
 # Frontend build directory (React production build)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+
+
+def _reap_exited_children() -> int:
+    """Reap direct child processes that exited without an explicit wait()."""
+    if os.name == "nt":
+        return 0
+
+    reaped = 0
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            break
+        except OSError as exc:
+            logger.debug("Child process reap failed: %s", exc)
+            break
+
+        if pid == 0:
+            break
+
+        reaped += 1
+        logger.debug("Reaped child process pid=%d status=%d", pid, status)
+
+    return reaped
+
+
+async def _periodic_child_reaper():
+    while True:
+        await asyncio.sleep(_CHILD_REAPER_INTERVAL_SECONDS)
+        reaped = _reap_exited_children()
+        if reaped:
+            logger.info("Reaped %d exited child process(es)", reaped)
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +432,10 @@ def _filter_rfb_client_messages(data: bytes) -> bytes:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _child_reaper_task
     db.init_db()
     await browser_mgr.cleanup_stale()
+    _child_reaper_task = asyncio.create_task(_periodic_child_reaper())
     browser_mgr._auto_launch_task = asyncio.create_task(browser_mgr.auto_launch_all())
     logger.info("CloakBrowser Manager started")
     yield
@@ -383,7 +443,12 @@ async def lifespan(app: FastAPI):
     if browser_mgr._auto_launch_task and not browser_mgr._auto_launch_task.done():
         browser_mgr._auto_launch_task.cancel()
         await asyncio.gather(browser_mgr._auto_launch_task, return_exceptions=True)
+    if _child_reaper_task and not _child_reaper_task.done():
+        _child_reaper_task.cancel()
+        await asyncio.gather(_child_reaper_task, return_exceptions=True)
+    await _stop_all_xclip()
     await browser_mgr.cleanup_all()
+    _reap_exited_children()
 
 
 app = FastAPI(title="CloakBrowser Manager", lifespan=lifespan)
@@ -433,6 +498,26 @@ async def auth_logout(request: Request, response: Response):
 
 
 # ── Profile CRUD ──────────────────────────────────────────────────────────────
+
+
+def _profile_response(profile: dict) -> ProfileResponse:
+    status = browser_mgr.get_status(profile["id"])
+    profile = dict(profile)
+    profile["status"] = status["status"]
+    profile["vnc_ws_port"] = status["vnc_ws_port"]
+    profile["cdp_url"] = status["cdp_url"]
+    profile["tags"] = [TagResponse(**t) for t in profile.get("tags", [])]
+    return ProfileResponse(**profile)
+
+
+def _safe_profile_data_dir(profile: dict) -> Path:
+    user_data_dir = Path(profile["user_data_dir"])
+    profiles_root = db.DATA_DIR / "profiles"
+    try:
+        user_data_dir.resolve().relative_to(profiles_root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Profile data directory is outside the managed profiles path")
+    return user_data_dir
 
 
 @app.get("/api/profiles", response_model=list[ProfileResponse])
@@ -519,6 +604,410 @@ async def delete_profile(profile_id: str):
     return {"ok": True}
 
 
+@app.post("/api/profiles/{profile_id}/archive", response_model=ProfileResponse)
+async def archive_profile(profile_id: str):
+    if profile_id in browser_mgr.running:
+        raise HTTPException(status_code=409, detail="Stop profile before archiving")
+
+    profile = db.get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    if profile.get("is_archived"):
+        return _profile_response(profile)
+
+    user_data_dir = _safe_profile_data_dir(profile)
+    try:
+        if user_data_dir.exists():
+            shutil.rmtree(user_data_dir)
+    except Exception as exc:
+        logger.error("Failed to delete profile data directory for archive %s: %s", profile_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to delete profile browser data")
+
+    archived = db.archive_profile(profile_id)
+    if not archived:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return _profile_response(archived)
+
+
+@app.post("/api/profiles/{profile_id}/restore", response_model=ProfileResponse)
+async def restore_profile(profile_id: str):
+    profile = db.restore_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return _profile_response(profile)
+
+
+# ── Inventory / account asset management ────────────────────────────────────
+
+_CSV_FIELDS = [
+    "profile_id",
+    "profile_name",
+    "profile_is_archived",
+    "profile_archived_at",
+    "proxy",
+    "account_id",
+    "platform",
+    "account_identifier",
+    "email_or_phone",
+    "account_status",
+    "platform_status_detail",
+    "purpose",
+    "last_used_at",
+    "notes",
+    "tags",
+]
+_SENSITIVE_CSV_COLUMNS = {
+    "password",
+    "pass",
+    "passwd",
+    "pwd",
+    "2fa",
+    "2fa_secret",
+    "totp",
+    "totp_secret",
+    "recovery_code",
+    "recovery_codes",
+    "backup_code",
+    "backup_codes",
+}
+
+
+def _attach_inventory_status(row: dict) -> dict:
+    status = browser_mgr.get_status(row["profile_id"])
+    row["profile_status"] = status["status"]
+    row["profile_vnc_ws_port"] = status["vnc_ws_port"]
+    row["profile_cdp_url"] = status["cdp_url"]
+    row["profile_tags"] = [TagResponse(**t) for t in row.get("profile_tags", [])]
+    return row
+
+
+def _csv_cell(row: dict, key: str) -> str:
+    value = row.get(key)
+    return "" if value is None else str(value)
+
+
+def _row_to_csv(row: dict) -> dict[str, str]:
+    tags = ";".join(t.tag if isinstance(t, TagResponse) else t["tag"] for t in row.get("profile_tags", []))
+    return {
+        "profile_id": _csv_cell(row, "profile_id"),
+        "profile_name": _csv_cell(row, "profile_name"),
+        "profile_is_archived": _csv_cell(row, "profile_is_archived"),
+        "profile_archived_at": _csv_cell(row, "profile_archived_at"),
+        "proxy": _csv_cell(row, "profile_proxy"),
+        "account_id": _csv_cell(row, "account_id"),
+        "platform": _csv_cell(row, "platform"),
+        "account_identifier": _csv_cell(row, "account_identifier"),
+        "email_or_phone": _csv_cell(row, "email_or_phone"),
+        "account_status": _csv_cell(row, "account_status"),
+        "platform_status_detail": _csv_cell(row, "platform_status_detail"),
+        "purpose": _csv_cell(row, "purpose"),
+        "last_used_at": _csv_cell(row, "last_used_at"),
+        "notes": _csv_cell(row, "account_notes"),
+        "tags": tags,
+    }
+
+
+def _csv_value(row: dict[str, str], key: str) -> str:
+    return (row.get(key) or "").strip()
+
+
+def _csv_optional(row: dict[str, str], key: str) -> str | None:
+    value = _csv_value(row, key)
+    return value or None
+
+
+def _csv_account_update_data(row: dict[str, str], existing: dict | None = None) -> dict:
+    platform = _csv_optional(row, "platform") or (existing or {}).get("platform")
+    account_identifier = _csv_optional(row, "account_identifier") or (existing or {}).get("account_identifier")
+    account_status = _csv_optional(row, "account_status") or (existing or {}).get("account_status") or "new"
+    return {
+        "platform": platform,
+        "account_identifier": account_identifier,
+        "email_or_phone": _csv_optional(row, "email_or_phone"),
+        "account_status": account_status,
+        "platform_status_detail": _csv_optional(row, "platform_status_detail"),
+        "purpose": _csv_optional(row, "purpose"),
+        "last_used_at": _csv_optional(row, "last_used_at"),
+        "notes": _csv_optional(row, "notes"),
+    }
+
+
+def _import_inventory_csv(text: str, dry_run: bool) -> dict:
+    result = {"dry_run": dry_run, "created": 0, "updated": 0, "skipped": 0, "rejected": 0, "errors": []}
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        result["rejected"] = 1
+        result["errors"].append({"row": 0, "detail": "CSV header is missing"})
+        return result
+
+    normalized_headers = {h.strip().lower() for h in reader.fieldnames if h}
+    sensitive = sorted(normalized_headers & _SENSITIVE_CSV_COLUMNS)
+    if sensitive:
+        result["rejected"] = 1
+        result["errors"].append({
+            "row": 0,
+            "detail": f"Sensitive columns are not allowed: {', '.join(sensitive)}",
+        })
+        return result
+
+    for row_number, row in enumerate(reader, start=2):
+        profile_id = _csv_value(row, "profile_id")
+        account_id = _csv_value(row, "account_id")
+        platform = _csv_value(row, "platform")
+        account_identifier = _csv_value(row, "account_identifier")
+
+        if not profile_id:
+            result["rejected"] += 1
+            result["errors"].append({"row": row_number, "detail": "profile_id is required"})
+            continue
+        if not db.get_profile(profile_id):
+            result["rejected"] += 1
+            result["errors"].append({"row": row_number, "detail": f"profile_id not found: {profile_id}"})
+            continue
+        if not account_id and not platform and not account_identifier:
+            result["skipped"] += 1
+            continue
+
+        try:
+            if account_id:
+                existing = db.get_account_asset(account_id)
+                if not existing:
+                    result["rejected"] += 1
+                    result["errors"].append({"row": row_number, "detail": f"account_id not found: {account_id}"})
+                    continue
+                if existing["profile_id"] != profile_id:
+                    result["rejected"] += 1
+                    result["errors"].append({
+                        "row": row_number,
+                        "detail": "account_id belongs to a different profile_id",
+                    })
+                    continue
+                data = _csv_account_update_data(row, existing)
+                if not dry_run:
+                    db.update_account_asset(account_id, **data)
+                result["updated"] += 1
+                continue
+
+            if not platform or not account_identifier:
+                result["rejected"] += 1
+                result["errors"].append({
+                    "row": row_number,
+                    "detail": "platform and account_identifier are required for new account rows",
+                })
+                continue
+            existing = db.find_account_asset(profile_id, platform, account_identifier)
+            data = _csv_account_update_data(row, existing)
+            if existing:
+                if not dry_run:
+                    db.update_account_asset(existing["id"], **data)
+                result["updated"] += 1
+            else:
+                if not dry_run:
+                    db.create_account_asset(profile_id, **data)
+                result["created"] += 1
+        except ValueError as exc:
+            result["rejected"] += 1
+            result["errors"].append({"row": row_number, "detail": str(exc)})
+        except Exception as exc:
+            result["rejected"] += 1
+            result["errors"].append({"row": row_number, "detail": f"Import failed: {exc}"})
+    return result
+
+
+@app.get("/api/inventory/rows", response_model=list[InventoryRowResponse])
+async def list_inventory_rows(include_retired: bool = False, include_archived: bool = False):
+    rows = [_attach_inventory_status(row) for row in db.list_inventory_rows(include_retired, include_archived)]
+    return [InventoryRowResponse(**row) for row in rows]
+
+
+@app.get("/api/inventory/export.csv")
+async def export_inventory_csv(include_archived: bool = False):
+    rows = [_attach_inventory_status(row) for row in db.list_inventory_rows(include_retired=True, include_archived=include_archived)]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=_CSV_FIELDS)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(_row_to_csv(row))
+    return FastAPIResponse(
+        output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=cloakbrowser-inventory.csv"},
+    )
+
+
+@app.post("/api/inventory/import.csv", response_model=CsvImportResult)
+async def import_inventory_csv(request: Request, dry_run: bool = True):
+    body = await request.body()
+    text = body.decode("utf-8-sig")
+    return CsvImportResult(**_import_inventory_csv(text, dry_run))
+
+
+@app.post("/api/profiles/{profile_id}/accounts", response_model=AccountAssetResponse, status_code=201)
+async def create_account_asset(profile_id: str, req: AccountAssetCreate):
+    try:
+        account = db.create_account_asset(profile_id, **req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("Failed to create account asset: %s", exc)
+        raise HTTPException(status_code=409, detail="Account asset already exists or is invalid")
+    if not account:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return AccountAssetResponse(**account)
+
+
+@app.put("/api/accounts/{account_id}", response_model=AccountAssetResponse)
+async def update_account_asset(account_id: str, req: AccountAssetUpdate):
+    data = req.model_dump(exclude_unset=True)
+    try:
+        account = db.update_account_asset(account_id, **data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("Failed to update account asset: %s", exc)
+        raise HTTPException(status_code=409, detail="Account asset already exists or is invalid")
+    if not account:
+        raise HTTPException(status_code=404, detail="Account asset not found")
+    return AccountAssetResponse(**account)
+
+
+@app.delete("/api/accounts/{account_id}")
+async def delete_account_asset(account_id: str):
+    if not db.delete_account_asset(account_id):
+        raise HTTPException(status_code=404, detail="Account asset not found")
+    return {"ok": True}
+
+
+# ── Research Center ─────────────────────────────────────────────────────────
+
+
+@app.get("/api/research/provider-config", response_model=ResearchProviderConfigResponse)
+async def get_research_provider_config():
+    return ResearchProviderConfigResponse(providers=research.PROVIDER_CONFIG)
+
+
+@app.get("/api/research/domains", response_model=list[ResearchDomainResponse])
+async def list_research_domains(
+    status: str | None = None,
+    niche: str | None = None,
+    min_score: int | None = None,
+    q: str | None = None,
+):
+    try:
+        domains = db.list_research_domains(status=status, niche=niche, min_score=min_score, q=q)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return [ResearchDomainResponse(**item) for item in domains]
+
+
+@app.post("/api/research/domains", response_model=ResearchDomainResponse, status_code=201)
+async def create_research_domain(req: ResearchDomainCreate):
+    try:
+        domain = db.create_research_domain(**req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("Failed to create research domain: %s", exc)
+        raise HTTPException(status_code=409, detail="Domain already exists or is invalid")
+    return ResearchDomainResponse(**domain)
+
+
+@app.post("/api/research/domains/bulk", response_model=ResearchImportResult)
+async def bulk_create_research_domains(req: ResearchDomainBulkCreate):
+    try:
+        result = db.import_research_domains(req.text, niche=req.niche, source=req.source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return ResearchImportResult(**result)
+
+
+@app.put("/api/research/domains/{domain_id}", response_model=ResearchDomainResponse)
+async def update_research_domain(domain_id: str, req: ResearchDomainUpdate):
+    try:
+        domain = db.update_research_domain(domain_id, **req.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not domain:
+        raise HTTPException(status_code=404, detail="Research domain not found")
+    return ResearchDomainResponse(**domain)
+
+
+@app.post("/api/research/domains/{domain_id}/wayback", response_model=WaybackSignalsResponse)
+async def refresh_research_domain_wayback(domain_id: str):
+    domain = db.get_research_domain(domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Research domain not found")
+    try:
+        signals = await research.fetch_wayback_signals(domain["domain"])
+        updated = db.update_research_domain_wayback(domain_id, signals)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except httpx.HTTPError as exc:
+        logger.warning("Wayback lookup failed for %s: %s", domain["domain"], exc)
+        raise HTTPException(status_code=502, detail="Wayback lookup failed")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Research domain not found")
+    return WaybackSignalsResponse(domain=ResearchDomainResponse(**updated), signals=signals)
+
+
+@app.get("/api/research/keywords", response_model=list[ResearchKeywordResponse])
+async def list_research_keywords(niche: str | None = None, q: str | None = None):
+    return [ResearchKeywordResponse(**item) for item in db.list_research_keywords(niche=niche, q=q)]
+
+
+@app.post("/api/research/keywords", response_model=list[ResearchKeywordResponse], status_code=201)
+async def create_research_keywords(req: ResearchKeywordTaskCreate):
+    try:
+        keywords = db.create_research_keywords(**req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return [ResearchKeywordResponse(**item) for item in keywords]
+
+
+@app.put("/api/research/keywords/{keyword_id}", response_model=ResearchKeywordResponse)
+async def update_research_keyword(keyword_id: str, req: ResearchKeywordUpdate):
+    try:
+        keyword = db.update_research_keyword(keyword_id, **req.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not keyword:
+        raise HTTPException(status_code=404, detail="Research keyword not found")
+    return ResearchKeywordResponse(**keyword)
+
+
+@app.get("/api/research/content-opportunities", response_model=list[ContentOpportunityResponse])
+async def list_content_opportunities(
+    state: str | None = None,
+    niche: str | None = None,
+    q: str | None = None,
+):
+    try:
+        items = db.list_content_opportunities(state=state, niche=niche, q=q)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return [ContentOpportunityResponse(**item) for item in items]
+
+
+@app.post("/api/research/content-opportunities", response_model=ContentOpportunityResponse, status_code=201)
+async def create_content_opportunity(req: ContentOpportunityCreate):
+    try:
+        opportunity = db.create_content_opportunity(**req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return ContentOpportunityResponse(**opportunity)
+
+
+@app.put("/api/research/content-opportunities/{opportunity_id}", response_model=ContentOpportunityResponse)
+async def update_content_opportunity(opportunity_id: str, req: ContentOpportunityUpdate):
+    try:
+        opportunity = db.update_content_opportunity(opportunity_id, **req.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not opportunity:
+        raise HTTPException(status_code=404, detail="Content opportunity not found")
+    return ContentOpportunityResponse(**opportunity)
+
+
 # ── Launch / Stop ─────────────────────────────────────────────────────────────
 
 
@@ -527,6 +1016,8 @@ async def launch_profile(profile_id: str):
     profile = db.get_profile(profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
+    if profile.get("is_archived"):
+        raise HTTPException(status_code=409, detail="Restore archived profile before launching")
     if profile_id in browser_mgr.running:
         raise HTTPException(status_code=409, detail="Profile is already running")
 
@@ -549,8 +1040,10 @@ async def launch_profile(profile_id: str):
 
 @app.post("/api/profiles/{profile_id}/stop")
 async def stop_profile(profile_id: str):
-    if profile_id not in browser_mgr.running:
+    running = browser_mgr.running.get(profile_id)
+    if not running:
         raise HTTPException(status_code=404, detail="Profile is not running")
+    await _stop_xclip_for_display(running.display)
     await browser_mgr.stop(profile_id)
     return {"ok": True}
 
@@ -562,6 +1055,29 @@ async def get_profile_status(profile_id: str):
         raise HTTPException(status_code=404, detail="Profile not found")
     status = browser_mgr.get_status(profile_id)
     return ProfileStatusResponse(**status)
+
+
+@app.post("/api/profiles/{profile_id}/open-url")
+async def open_profile_url(profile_id: str, body: ProfileOpenUrlRequest):
+    profile = db.get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    if profile.get("is_archived"):
+        raise HTTPException(status_code=409, detail="Restore archived profile before opening URLs")
+
+    running = browser_mgr.running.get(profile_id)
+    if not running:
+        raise HTTPException(status_code=409, detail="Profile must be running before opening URLs")
+
+    try:
+        page = await running.context.new_page()
+        await page.goto(body.url, wait_until="domcontentloaded", timeout=15000)
+        await page.bring_to_front()
+    except Exception as exc:
+        logger.error("Failed to open URL in profile %s: %s", profile_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to open URL in profile")
+
+    return {"ok": True, "profile_id": profile_id, "url": body.url}
 
 
 # ── System Status ─────────────────────────────────────────────────────────────
@@ -585,6 +1101,51 @@ _CLIPBOARD_MAX_READ = 1_048_576  # 1MB cap on GET response
 
 # Track xclip processes per display so we can kill the old one before spawning new
 _xclip_procs: dict[int, asyncio.subprocess.Process] = {}
+_xclip_wait_tasks: dict[int, asyncio.Task] = {}
+_XCLIP_STOP_TIMEOUT_SECONDS = 2
+
+
+async def _watch_xclip(display: int, proc: asyncio.subprocess.Process):
+    try:
+        await proc.wait()
+    except Exception as exc:
+        logger.debug("xclip watcher failed for display :%d: %s", display, exc)
+    finally:
+        if _xclip_procs.get(display) is proc:
+            _xclip_procs.pop(display, None)
+        if _xclip_wait_tasks.get(display) is asyncio.current_task():
+            _xclip_wait_tasks.pop(display, None)
+
+
+async def _stop_xclip_for_display(display: int):
+    proc = _xclip_procs.pop(display, None)
+    task = _xclip_wait_tasks.pop(display, None)
+    if not proc:
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        return
+
+    if proc.returncode is None:
+        with suppress(ProcessLookupError):
+            proc.terminate()
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_XCLIP_STOP_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        with suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+
+    if task and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def _stop_all_xclip():
+    displays = list(_xclip_procs.keys() | _xclip_wait_tasks.keys())
+    for display in displays:
+        await _stop_xclip_for_display(display)
 
 
 @app.post("/api/profiles/{profile_id}/clipboard")
@@ -596,11 +1157,8 @@ async def set_clipboard(profile_id: str, body: ClipboardRequest):
 
     import os
 
-    # Kill previous xclip for this display (it stays alive to serve paste)
-    old = _xclip_procs.pop(running.display, None)
-    if old and old.returncode is None:
-        old.kill()
-        await old.wait()
+    # Stop previous xclip for this display (it stays alive to serve paste)
+    await _stop_xclip_for_display(running.display)
 
     env = {**os.environ, "DISPLAY": f":{running.display}"}
     proc = await asyncio.create_subprocess_exec(
@@ -608,12 +1166,19 @@ async def set_clipboard(profile_id: str, body: ClipboardRequest):
         stdin=asyncio.subprocess.PIPE,
         env=env,
     )
-    # xclip reads stdin then stays alive to serve paste requests.
-    proc.stdin.write(body.text.encode())  # type: ignore[union-attr]
-    await proc.stdin.drain()  # type: ignore[union-attr]
-    proc.stdin.close()  # type: ignore[union-attr]
+    try:
+        # xclip reads stdin then stays alive to serve paste requests.
+        proc.stdin.write(body.text.encode())  # type: ignore[union-attr]
+        await proc.stdin.drain()  # type: ignore[union-attr]
+        proc.stdin.close()  # type: ignore[union-attr]
+    except Exception:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+        raise
 
     _xclip_procs[running.display] = proc
+    _xclip_wait_tasks[running.display] = asyncio.create_task(_watch_xclip(running.display, proc))
 
     return {"ok": True}
 

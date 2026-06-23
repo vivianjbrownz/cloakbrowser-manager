@@ -71,6 +71,27 @@ describe("api.deleteProfile", () => {
   });
 });
 
+describe("api.archiveProfile", () => {
+  it("sends POST to archive endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "1", is_archived: true }));
+    const result = await api.archiveProfile("1");
+    expect(result).toEqual({ id: "1", is_archived: true });
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/profiles/1/archive");
+    expect(options.method).toBe("POST");
+  });
+});
+
+describe("api.restoreProfile", () => {
+  it("sends POST to restore endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "1", is_archived: false }));
+    await api.restoreProfile("1");
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/profiles/1/restore");
+    expect(options.method).toBe("POST");
+  });
+});
+
 // ── launchProfile ───────────────────────────────────────────────────────────
 
 describe("api.launchProfile", () => {
@@ -113,6 +134,156 @@ describe("api.getClipboard", () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ text: "copied" }));
     const result = await api.getClipboard("1");
     expect(result.text).toBe("copied");
+  });
+});
+
+describe("api.openProfileUrl", () => {
+  it("opens a URL inside a running profile", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true, profile_id: "1", url: "https://www.reddit.com/register/" }));
+    await api.openProfileUrl("1", "https://www.reddit.com/register/");
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/profiles/1/open-url");
+    expect(options.method).toBe("POST");
+    expect(JSON.parse(options.body)).toEqual({ url: "https://www.reddit.com/register/" });
+  });
+});
+
+// ── Inventory ──────────────────────────────────────────────────────────────
+
+describe("api.listInventoryRows", () => {
+  it("passes include_retired and include_archived flags", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([]));
+    await api.listInventoryRows(true, true);
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/inventory/rows?include_retired=true&include_archived=true");
+  });
+});
+
+describe("api.createAccount", () => {
+  it("creates account assets under a profile", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "a1", profile_id: "p1" }));
+    await api.createAccount("p1", {
+      platform: "facebook",
+      account_identifier: "fb-user",
+      account_status: "active",
+    });
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/profiles/p1/accounts");
+    expect(options.method).toBe("POST");
+    expect(JSON.parse(options.body)).toEqual({
+      platform: "facebook",
+      account_identifier: "fb-user",
+      account_status: "active",
+    });
+  });
+});
+
+describe("api.importInventoryCsv", () => {
+  it("sends CSV text with dry run flag", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ dry_run: true, created: 1, updated: 0, skipped: 0, rejected: 0, errors: [] }));
+    await api.importInventoryCsv("profile_id,platform\n", true);
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/inventory/import.csv?dry_run=true");
+    expect(options.method).toBe("POST");
+    expect(options.headers).toEqual({ "Content-Type": "text/csv" });
+    expect(options.body).toBe("profile_id,platform\n");
+  });
+});
+
+describe("api.exportInventoryCsv", () => {
+  it("returns CSV text", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: () => Promise.resolve("profile_id\np1\n"),
+    });
+    const text = await api.exportInventoryCsv();
+    expect(text).toBe("profile_id\np1\n");
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/inventory/export.csv?include_archived=false");
+  });
+
+  it("can include archived profiles", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: () => Promise.resolve("profile_id\np1\n"),
+    });
+    await api.exportInventoryCsv(true);
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/inventory/export.csv?include_archived=true");
+  });
+});
+
+// ── Research Center ────────────────────────────────────────────────────────
+
+describe("api.listResearchDomains", () => {
+  it("passes domain filters as query params", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([]));
+    await api.listResearchDomains({ status: "review", min_score: 50, q: "hosting" });
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/research/domains?status=review&min_score=50&q=hosting");
+  });
+});
+
+describe("api.bulkCreateResearchDomains", () => {
+  it("sends bulk domain text", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ created: 1, updated: 0, skipped: 0, rejected: 0, errors: [] }));
+    await api.bulkCreateResearchDomains("example.com", "hosting", "manual");
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/research/domains/bulk");
+    expect(options.method).toBe("POST");
+    expect(JSON.parse(options.body)).toEqual({
+      text: "example.com",
+      niche: "hosting",
+      source: "manual",
+    });
+  });
+});
+
+describe("api.refreshResearchDomainWayback", () => {
+  it("posts to the Wayback refresh endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ domain: { id: "d1" }, signals: {} }));
+    await api.refreshResearchDomainWayback("d1");
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/research/domains/d1/wayback");
+    expect(options.method).toBe("POST");
+  });
+});
+
+describe("api.createResearchKeywords", () => {
+  it("creates keyword research tasks", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse([]));
+    await api.createResearchKeywords({
+      niche: "hosting",
+      seed_keywords: ["best hosting"],
+      target_country: "US",
+      target_language: "en",
+    });
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/research/keywords");
+    expect(options.method).toBe("POST");
+    expect(JSON.parse(options.body)).toEqual({
+      niche: "hosting",
+      seed_keywords: ["best hosting"],
+      target_country: "US",
+      target_language: "en",
+    });
+  });
+});
+
+describe("api.createContentOpportunity", () => {
+  it("creates content opportunities", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: "c1" }));
+    await api.createContentOpportunity({
+      keyword_id: "k1",
+      niche: "hosting",
+      keyword: "best hosting",
+      article_type: "best",
+      priority: "high",
+      monetization_type: "affiliate",
+    });
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/research/content-opportunities");
+    expect(options.method).toBe("POST");
   });
 });
 

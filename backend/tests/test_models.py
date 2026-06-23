@@ -29,6 +29,8 @@ def test_profile_create_minimal():
     assert p.humanize is False
     assert p.headless is False
     assert p.geoip is False
+    assert p.clipboard_sync is False
+    assert p.restore_last_session is True
     assert p.human_preset == "default"
 
 
@@ -50,12 +52,14 @@ def test_profile_create_all_fields():
         human_preset="careful",
         headless=True,
         geoip=True,
+        restore_last_session=False,
         color_scheme="dark",
         notes="test note",
         tags=[TagCreate(tag="work", color="#ff0000")],
     )
     assert p.platform == "macos"
     assert p.human_preset == "careful"
+    assert p.restore_last_session is False
     assert p.color_scheme == "dark"
     assert len(p.tags) == 1
 
@@ -74,6 +78,12 @@ def test_profile_update_launch_args():
     p = ProfileUpdate(launch_args=["--flag"])
     dumped = p.model_dump(exclude_unset=True)
     assert dumped == {"launch_args": ["--flag"]}
+
+
+def test_profile_update_restore_last_session():
+    p = ProfileUpdate(restore_last_session=False)
+    dumped = p.model_dump(exclude_unset=True)
+    assert dumped == {"restore_last_session": False}
 
 
 def test_profile_create_invalid_platform():
@@ -195,3 +205,13 @@ def test_profile_response_cdp_url_default_none():
         created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00",
     )
     assert r.cdp_url is None
+
+
+def test_profile_response_archive_defaults():
+    r = ProfileResponse(
+        id="abc", name="Test", fingerprint_seed=12345,
+        user_data_dir="/data/profiles/abc",
+        created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00",
+    )
+    assert r.is_archived is False
+    assert r.archived_at is None

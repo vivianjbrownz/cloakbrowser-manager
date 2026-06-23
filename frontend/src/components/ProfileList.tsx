@@ -12,12 +12,13 @@ interface ProfileListProps {
 
 export function ProfileList({ profiles, selectedId, onSelect, onNew }: ProfileListProps) {
   const [search, setSearch] = useState("");
+  const activeProfiles = profiles.filter((profile) => !profile.is_archived);
 
-  const filtered = profiles.filter((p) =>
+  const filtered = activeProfiles.filter((p) =>
     p.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const runningCount = profiles.filter((p) => p.status === "running").length;
+  const runningCount = activeProfiles.filter((p) => p.status === "running").length;
 
   return (
     <div className="flex flex-col h-full">
@@ -49,7 +50,7 @@ export function ProfileList({ profiles, selectedId, onSelect, onNew }: ProfileLi
       <div className="flex-1 overflow-y-auto p-2">
         {filtered.length === 0 && (
           <div className="text-center text-gray-500 text-xs py-8">
-            {profiles.length === 0 ? "No profiles yet" : "No matches"}
+            {activeProfiles.length === 0 ? "No profiles yet" : "No matches"}
           </div>
         )}
         {filtered.map((profile) => (

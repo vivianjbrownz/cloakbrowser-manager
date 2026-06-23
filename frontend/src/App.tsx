@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Lock, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Lock, Microscope, PanelLeftClose, PanelLeft, Table2 } from "lucide-react";
 import { useProfiles } from "./hooks/useProfiles";
 import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
@@ -8,9 +8,14 @@ import { ProfileViewer } from "./components/ProfileViewer";
 import { LaunchButton } from "./components/LaunchButton";
 import { StatusIndicator } from "./components/StatusIndicator";
 import { LoginPage } from "./components/LoginPage";
+import { InventoryTable } from "./components/InventoryTable";
+import { ThemeToggle } from "./components/ThemeToggle";
+import { RunningProfilesBar } from "./components/RunningProfilesBar";
+import { RegistrationLinksIcon, RegistrationLinksPlugin } from "./components/RegistrationLinksPlugin";
+import { ResearchCenter } from "./components/ResearchCenter";
 
 type AuthState = "checking" | "required" | "ok" | "error";
-type View = "empty" | "create" | "edit" | "view";
+type View = "inventory" | "registration" | "research" | "empty" | "create" | "edit" | "view";
 
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
@@ -89,9 +94,9 @@ interface AppContentProps {
 }
 
 function AppContent({ authRequired, onLogout }: AppContentProps) {
-  const { profiles, loading, error, create, update, remove, launch, stop } = useProfiles();
+  const { profiles, loading, error, refresh, create, update, remove, archive, restore, launch, stop } = useProfiles();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<View>("empty");
+  const [view, setView] = useState<View>("inventory");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const selected = profiles.find((p) => p.id === selectedId) ?? null;
@@ -99,7 +104,7 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id);
     const profile = profiles.find((p) => p.id === id);
-    setView(profile?.status === "running" ? "view" : "edit");
+    setView(profile?.status === "running" && !profile.is_archived ? "view" : "edit");
   }, [profiles]);
 
   const handleNew = useCallback(() => {
@@ -124,20 +129,48 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
     if (!selectedId) return;
     await remove(selectedId);
     setSelectedId(null);
-    setView("empty");
+    setView("inventory");
   }, [selectedId, remove]);
+
+  const handleArchiveProfile = useCallback(async (profileId: string) => {
+    const profile = await archive(profileId);
+    if (profile) {
+      setSelectedId(profileId);
+      setView("inventory");
+    }
+  }, [archive]);
+
+  const handleRestoreProfile = useCallback(async (profileId: string) => {
+    const profile = await restore(profileId);
+    if (profile) {
+      setSelectedId(profileId);
+      setView("edit");
+    }
+  }, [restore]);
+
+  const handleLaunchProfile = useCallback(async (profileId: string) => {
+    const profile = profiles.find((p) => p.id === profileId);
+    if (profile?.is_archived) return;
+    const result = await launch(profileId);
+    if (result) setView("view");
+    setSelectedId(profileId);
+  }, [launch, profiles]);
+
+  const handleStopProfile = useCallback(async (profileId: string) => {
+    await stop(profileId);
+    setSelectedId(profileId);
+    setView("edit");
+  }, [stop]);
 
   const handleLaunch = useCallback(async () => {
     if (!selectedId) return;
-    const result = await launch(selectedId);
-    if (result) setView("view");
-  }, [selectedId, launch]);
+    await handleLaunchProfile(selectedId);
+  }, [handleLaunchProfile, selectedId]);
 
   const handleStop = useCallback(async () => {
     if (!selectedId) return;
-    await stop(selectedId);
-    setView("edit");
-  }, [selectedId, stop]);
+    await handleStopProfile(selectedId);
+  }, [handleStopProfile, selectedId]);
 
   const handleVncDisconnect = useCallback(() => {
     setView("edit");
@@ -171,28 +204,64 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface-1">
           <div className="flex items-center gap-3">
             <button
+              onClick={() => {
+                setSelectedId(null);
+                setView("inventory");
+              }}
+              className={`text-gray-500 hover:text-gray-300 p-1 ${view === "inventory" ? "text-accent" : ""}`}
+              title="Inventory"
+            >
+              <Table2 className="h-4 w-4" />
+            </button>
+            <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="text-gray-500 hover:text-gray-300 p-1"
               title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
             >
               {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
             </button>
+            <button
+              onClick={() => {
+                setSelectedId(null);
+                setView("registration");
+              }}
+              className={`text-gray-500 hover:text-gray-300 p-1 ${view === "registration" ? "text-accent" : ""}`}
+              title="Registration links"
+            >
+              <RegistrationLinksIcon />
+            </button>
+            <button
+              onClick={() => {
+                setSelectedId(null);
+                setView("research");
+              }}
+              className={`text-gray-500 hover:text-gray-300 p-1 ${view === "research" ? "text-accent" : ""}`}
+              title="Research Center"
+            >
+              <Microscope className="h-4 w-4" />
+            </button>
             {selected && (
               <div className="flex items-center gap-2">
                 <StatusIndicator status={selected.status} size="md" />
                 <span className="text-sm font-medium">{selected.name}</span>
                 <span className="text-xs text-gray-500 capitalize">{selected.platform}</span>
+                {selected.is_archived && (
+                  <span className="text-[10px] uppercase tracking-wide text-gray-500 border border-border rounded-full px-2 py-0.5">
+                    Archived
+                  </span>
+                )}
               </div>
             )}
           </div>
           <div className="flex items-center gap-2">
-            {selected && (
+            {selected && !selected.is_archived && (
               <LaunchButton
                 status={selected.status}
                 onLaunch={handleLaunch}
                 onStop={handleStop}
               />
             )}
+            <ThemeToggle />
             {authRequired && (
               <button
                 onClick={onLogout}
@@ -204,6 +273,13 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
             )}
           </div>
         </div>
+
+        <RunningProfilesBar
+          profiles={profiles}
+          selectedId={selectedId}
+          onOpenProfile={handleSelect}
+          onStopProfile={handleStopProfile}
+        />
 
         {/* Error banner */}
         {error && (
@@ -222,11 +298,35 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
             </div>
           )}
 
+          {view === "inventory" && (
+            <InventoryTable
+              profiles={profiles}
+              onNewProfile={handleNew}
+              onOpenProfile={handleSelect}
+              onLaunchProfile={handleLaunchProfile}
+              onStopProfile={handleStopProfile}
+              onRefreshProfiles={refresh}
+              onArchiveProfile={handleArchiveProfile}
+              onRestoreProfile={handleRestoreProfile}
+            />
+          )}
+
+          {view === "registration" && (
+            <RegistrationLinksPlugin
+              profiles={profiles}
+              onOpenProfile={handleSelect}
+            />
+          )}
+
+          {view === "research" && (
+            <ResearchCenter />
+          )}
+
           {view === "create" && (
             <ProfileForm
               profile={null}
               onSave={handleCreate}
-              onCancel={() => setView("empty")}
+              onCancel={() => setView("inventory")}
             />
           )}
 
@@ -237,7 +337,7 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
               onDelete={handleDelete}
               onCancel={() => {
                 setSelectedId(null);
-                setView("empty");
+                setView("inventory");
               }}
             />
           )}

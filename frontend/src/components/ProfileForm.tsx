@@ -64,8 +64,9 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
     human_preset: "default",
     headless: false,
     geoip: false,
-    clipboard_sync: true,
+    clipboard_sync: false,
     auto_launch: false,
+    restore_last_session: true,
     launch_args: [],
     tags: [],
   });
@@ -97,6 +98,7 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         geoip: profile.geoip,
         clipboard_sync: profile.clipboard_sync,
         auto_launch: profile.auto_launch,
+        restore_last_session: profile.restore_last_session ?? true,
         color_scheme: profile.color_scheme,
         launch_args: profile.launch_args ?? [],
         notes: profile.notes,
@@ -439,11 +441,11 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
-                checked={form.clipboard_sync ?? true}
+                checked={form.clipboard_sync ?? false}
                 onChange={(e) => set("clipboard_sync", e.target.checked)}
                 className="rounded border-border bg-surface-2"
               />
-              Enable clipboard sync by default in VNC viewer
+              Enable continuous clipboard sync in VNC viewer
             </label>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
@@ -453,6 +455,15 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
                 className="rounded border-border bg-surface-2"
               />
               Launch automatically when container starts
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.restore_last_session ?? true}
+                onChange={(e) => set("restore_last_session", e.target.checked)}
+                className="rounded border-border bg-surface-2"
+              />
+              Restore previous tabs on launch
             </label>
             <div>
               <label className="label">Color Scheme</label>

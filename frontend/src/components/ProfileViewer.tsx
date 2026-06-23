@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ClipboardCopy, Code2, Maximize2, Minimize2 } from "lucide-react";
+import { ClipboardCopy, Code2, Gauge, Maximize2, Minimize2 } from "lucide-react";
 import { api } from "../lib/api";
 
 interface ProfileViewerProps {
@@ -11,6 +11,44 @@ interface ProfileViewerProps {
 
 // X11 keysym for V key (Ctrl is already held in VNC by the time we intercept)
 const XK_v = 0x0076;
+const VIEWER_MODE_STORAGE_KEY = "cloakbrowser.viewer.qualityMode";
+
+type ViewerQualityMode = "fast" | "balanced" | "sharp";
+
+const VIEWER_QUALITY_MODES: Record<
+  ViewerQualityMode,
+  { label: string; qualityLevel: number; compressionLevel: number }
+> = {
+  fast: { label: "Fast", qualityLevel: 4, compressionLevel: 7 },
+  balanced: { label: "Balanced", qualityLevel: 6, compressionLevel: 5 },
+  sharp: { label: "Sharp", qualityLevel: 9, compressionLevel: 2 },
+};
+
+function loadViewerQualityMode(): ViewerQualityMode {
+  try {
+    const saved = window.localStorage.getItem(VIEWER_MODE_STORAGE_KEY);
+    if (saved === "fast" || saved === "balanced" || saved === "sharp") {
+      return saved;
+    }
+  } catch (err) {
+    console.debug("[vnc] failed to load viewer quality mode:", err);
+  }
+  return "fast";
+}
+
+function saveViewerQualityMode(mode: ViewerQualityMode) {
+  try {
+    window.localStorage.setItem(VIEWER_MODE_STORAGE_KEY, mode);
+  } catch (err) {
+    console.debug("[vnc] failed to save viewer quality mode:", err);
+  }
+}
+
+function applyViewerQualityMode(rfb: any, mode: ViewerQualityMode) {
+  const preset = VIEWER_QUALITY_MODES[mode];
+  rfb.qualityLevel = preset.qualityLevel;
+  rfb.compressionLevel = preset.compressionLevel;
+}
 
 export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboardSync, onDisconnect }: ProfileViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -20,6 +58,7 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
   const [fullscreen, setFullscreen] = useState(false);
   const [clipboardSync, setClipboardSync] = useState(initialClipboardSync);
   const [cdpCopied, setCdpCopied] = useState(false);
+  const [viewerMode, setViewerMode] = useState<ViewerQualityMode>(loadViewerQualityMode);
 
   useEffect(() => {
     let rfb: any = null;
@@ -43,6 +82,7 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         rfb.scaleViewport = true;
         rfb.resizeSession = false;
         rfb.showDotCursor = true;
+        applyViewerQualityMode(rfb, viewerMode);
 
         rfb.addEventListener("connect", () => {
           if (!cancelled) setConnected(true);
@@ -80,82 +120,74 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
     };
   }, [profileId, onDisconnect]);
 
+  const selectViewerMode = (mode: ViewerQualityMode) => {
+    setViewerMode(mode);
+    saveViewerQualityMode(mode);
+    if (rfbRef.current) {
+      applyViewerQualityMode(rfbRef.current, mode);
+    }
+  };
+
+  const sendPasteKeys = () => {
+    const rfb = rfbRef.current;
+    if (!rfb) return;
+    // Send the full Ctrl+V sequence because the host key state can change
+    // while the async clipboard API call is in flight.
+    rfb.sendKey(0xffe3, "ControlLeft", true);
+    rfb.sendKey(XK_v, "KeyV", true);
+    rfb.sendKey(XK_v, "KeyV", false);
+    rfb.sendKey(0xffe3, "ControlLeft", false);
+  };
+
   // Host→VNC: intercept Ctrl+V/Cmd+V at keydown (capture phase)
   // Must fire BEFORE noVNC's canvas listener to prevent the race condition
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !clipboardSync || !connected) return;
+    if (!container || !connected) return;
 
     const handleKeyDown = async (e: KeyboardEvent) => {
-      console.log("[clipboard] keydown:", e.key, "ctrl:", e.ctrlKey, "meta:", e.metaKey, "clipboardSync:", true);
-
       const isPaste =
         e.key === "v" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
       if (!isPaste) return;
-
-      console.log("[clipboard] intercepted Ctrl+V");
 
       // Block noVNC from sending the keystroke before clipboard is updated
       e.stopPropagation();
       e.preventDefault();
 
-      const rfb = rfbRef.current;
-      if (!rfb) {
-        console.log("[clipboard] no rfb ref, aborting");
-        return;
-      }
-
       try {
         const text = await navigator.clipboard.readText();
-        console.log("[clipboard] host clipboard text:", text?.substring(0, 50), "len:", text?.length);
         if (text) {
-          console.log("[clipboard] calling setClipboard API...");
           await api.setClipboard(profileId, text);
-          console.log("[clipboard] setClipboard API success");
         }
       } catch (err) {
-        console.warn("[clipboard] error:", err);
-        setClipboardSync(false);
-        return;
+        console.warn("[clipboard] one-time paste failed:", err);
       }
 
-      // Send full Ctrl+V sequence to VNC. We can't rely on Ctrl still being
-      // held because the user may have released it during the async API call.
-      console.log("[clipboard] sending Ctrl+V to VNC");
-      rfb.sendKey(0xffe3, "ControlLeft", true);   // Ctrl press
-      rfb.sendKey(XK_v, "KeyV", true);             // V press
-      rfb.sendKey(XK_v, "KeyV", false);            // V release
-      rfb.sendKey(0xffe3, "ControlLeft", false);   // Ctrl release
+      sendPasteKeys();
     };
 
     // capture: true ensures we fire before noVNC's canvas listener
     container.addEventListener("keydown", handleKeyDown, true);
     return () => container.removeEventListener("keydown", handleKeyDown, true);
-  }, [profileId, clipboardSync, connected]);
+  }, [profileId, connected]);
 
   // VNC→Host: listen for noVNC "clipboard" event (fired when proxy converts
   // KasmVNC BinaryClipboard type 180 → standard ServerCutText type 3)
   useEffect(() => {
     const rfb = rfbRef.current;
-    console.log("[clipboard] VNC→Host effect: rfb=", !!rfb, "sync=", clipboardSync, "connected=", connected);
     if (!rfb || !clipboardSync || !connected) return;
 
     const handleClipboard = (e: any) => {
       const text = e.detail?.text;
-      console.log("[clipboard] VNC→Host event fired, text:", text?.substring(0, 50), "len:", text?.length);
       if (text) {
-        navigator.clipboard.writeText(text).then(() => {
-          console.log("[clipboard] writeText success");
-        }).catch((err) => {
+        navigator.clipboard.writeText(text).catch((err) => {
           console.warn("[clipboard] writeText failed:", err);
         });
       }
     };
 
-    console.log("[clipboard] registering clipboard event listener on rfb");
     rfb.addEventListener("clipboard", handleClipboard);
     return () => {
-      console.log("[clipboard] removing clipboard event listener");
       rfb.removeEventListener("clipboard", handleClipboard);
     };
   }, [clipboardSync, connected]);
@@ -174,7 +206,6 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         const { text } = await api.getClipboard(profileId);
         if (text && text !== lastText) {
           lastText = text;
-          console.log("[clipboard] poll: new VNC clipboard:", text.substring(0, 50), "len:", text.length);
           await navigator.clipboard.writeText(text).catch((err) =>
             console.warn("[clipboard] poll writeText failed:", err)
           );
@@ -250,6 +281,26 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
           </span>
         </div>
         <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 mr-1" title="Viewer quality">
+            <Gauge className="h-3.5 w-3.5 text-gray-500" />
+            <div className="flex overflow-hidden rounded border border-border">
+              {(Object.keys(VIEWER_QUALITY_MODES) as ViewerQualityMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => selectViewerMode(mode)}
+                  className={`px-2 py-1 text-[11px] leading-none ${
+                    viewerMode === mode
+                      ? "bg-accent text-white"
+                      : "bg-surface-2 text-gray-400 hover:text-gray-200"
+                  }`}
+                  title={`${VIEWER_QUALITY_MODES[mode].label} viewer mode`}
+                >
+                  {VIEWER_QUALITY_MODES[mode].label}
+                </button>
+              ))}
+            </div>
+          </div>
           {cdpUrl && (
             <button
               onClick={() => {
@@ -266,9 +317,9 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
             </button>
           )}
           <button
-            onClick={() => { console.log("[clipboard] toggle:", !clipboardSync); setClipboardSync(!clipboardSync); }}
+            onClick={() => setClipboardSync(!clipboardSync)}
             className={`p-1 ${clipboardSync ? "text-accent" : "text-gray-500 hover:text-gray-300"}`}
-            title={clipboardSync ? "Disable clipboard sync" : "Enable clipboard sync"}
+            title={clipboardSync ? "Disable continuous clipboard sync" : "Enable continuous clipboard sync"}
             disabled={!connected}
           >
             <ClipboardCopy className="h-3.5 w-3.5" />
@@ -286,6 +337,7 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
       {/* VNC canvas container */}
       <div
         ref={containerRef}
+        data-testid="vnc-canvas-container"
         className="flex-1 bg-black overflow-hidden"
         style={{ minHeight: 0 }}
       />

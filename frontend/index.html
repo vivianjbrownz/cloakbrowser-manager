@@ -1,10 +1,26 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CloakBrowser Manager</title>
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <script>
+      (() => {
+        try {
+          const mode = localStorage.getItem("cloakbrowser.theme") || "system";
+          const isDark =
+            mode === "dark" ||
+            (mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", isDark);
+          document.documentElement.classList.toggle("light", !isDark);
+          document.documentElement.dataset.themeMode = mode;
+        } catch {
+          document.documentElement.classList.add("dark");
+          document.documentElement.dataset.themeMode = "system";
+        }
+      })();
+    </script>
   </head>
   <body class="bg-surface-0 text-gray-100 antialiased">
     <div id="root"></div>

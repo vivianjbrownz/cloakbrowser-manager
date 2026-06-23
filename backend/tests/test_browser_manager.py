@@ -8,14 +8,18 @@ from pathlib import Path
 import pytest
 
 import socket
+from unittest.mock import AsyncMock, MagicMock
 
 from backend.browser_manager import (
     BASE_CDP_PORT,
     CDP_PORT_RANGE,
+    _configure_session_restore,
     _init_profile_defaults,
     _normalize_proxy,
+    _restore_last_session_enabled,
     _validate_proxy,
     BrowserManager,
+    RunningProfile,
 )
 
 
@@ -176,6 +180,205 @@ def test_launch_args_none_no_effect():
     assert len(args) == base_count
 
 
+# ── clipboard init script ───────────────────────────────────────────────────
+
+
+def _profile_for_launch(
+    tmp_path: Path,
+    *,
+    clipboard_sync: bool,
+    restore_last_session: bool = True,
+) -> dict:
+    return {
+        "id": f"profile-{int(clipboard_sync)}",
+        "user_data_dir": str(tmp_path / f"profile-{int(clipboard_sync)}"),
+        "screen_width": 1366,
+        "screen_height": 768,
+        "headless": False,
+        "humanize": False,
+        "human_preset": "default",
+        "geoip": False,
+        "launch_args": [],
+        "proxy": None,
+        "clipboard_sync": clipboard_sync,
+        "restore_last_session": restore_last_session,
+    }
+
+
+@pytest.mark.asyncio
+async def test_launch_skips_clipboard_init_when_sync_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backend import browser_manager as browser_manager_module
+
+    mgr = BrowserManager()
+    monkeypatch.setattr(mgr.vnc, "start_vnc", AsyncMock())
+    monkeypatch.setattr(mgr.vnc, "stop_vnc", AsyncMock())
+
+    context = MagicMock()
+    context.add_init_script = AsyncMock()
+    context.pages = []
+    context.on = MagicMock()
+    monkeypatch.setattr(
+        browser_manager_module,
+        "launch_persistent_context_async",
+        AsyncMock(return_value=context),
+    )
+
+    await mgr.launch(_profile_for_launch(tmp_path, clipboard_sync=False))
+
+    context.add_init_script.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_launch_injects_clipboard_init_when_sync_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backend import browser_manager as browser_manager_module
+
+    mgr = BrowserManager()
+    monkeypatch.setattr(mgr.vnc, "start_vnc", AsyncMock())
+    monkeypatch.setattr(mgr.vnc, "stop_vnc", AsyncMock())
+
+    page = MagicMock()
+    page.evaluate = AsyncMock()
+    context = MagicMock()
+    context.add_init_script = AsyncMock()
+    context.pages = [page]
+    context.on = MagicMock()
+    monkeypatch.setattr(
+        browser_manager_module,
+        "launch_persistent_context_async",
+        AsyncMock(return_value=context),
+    )
+
+    await mgr.launch(_profile_for_launch(tmp_path, clipboard_sync=True))
+
+    context.add_init_script.assert_awaited_once()
+    page.evaluate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_launch_adds_restore_last_session_arg_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backend import browser_manager as browser_manager_module
+
+    mgr = BrowserManager()
+    monkeypatch.setattr(mgr.vnc, "start_vnc", AsyncMock())
+    monkeypatch.setattr(mgr.vnc, "stop_vnc", AsyncMock())
+
+    context = MagicMock()
+    context.add_init_script = AsyncMock()
+    context.pages = []
+    context.on = MagicMock()
+    launch_mock = AsyncMock(return_value=context)
+    monkeypatch.setattr(browser_manager_module, "launch_persistent_context_async", launch_mock)
+
+    await mgr.launch(_profile_for_launch(tmp_path, clipboard_sync=False))
+
+    args = launch_mock.await_args.kwargs["args"]
+    assert "--restore-last-session" in args
+
+
+@pytest.mark.asyncio
+async def test_launch_skips_restore_last_session_arg_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backend import browser_manager as browser_manager_module
+
+    mgr = BrowserManager()
+    monkeypatch.setattr(mgr.vnc, "start_vnc", AsyncMock())
+    monkeypatch.setattr(mgr.vnc, "stop_vnc", AsyncMock())
+
+    context = MagicMock()
+    context.add_init_script = AsyncMock()
+    context.pages = []
+    context.on = MagicMock()
+    launch_mock = AsyncMock(return_value=context)
+    monkeypatch.setattr(browser_manager_module, "launch_persistent_context_async", launch_mock)
+
+    await mgr.launch(_profile_for_launch(tmp_path, clipboard_sync=False, restore_last_session=False))
+
+    args = launch_mock.await_args.kwargs["args"]
+    assert "--restore-last-session" not in args
+
+
+@pytest.mark.asyncio
+async def test_browser_closed_event_closes_context_and_stops_vnc(monkeypatch: pytest.MonkeyPatch):
+    mgr = BrowserManager()
+    monkeypatch.setattr(mgr.vnc, "stop_vnc", AsyncMock())
+
+    context = MagicMock()
+    context.close = AsyncMock()
+    mgr.running["profile-1"] = RunningProfile(
+        profile_id="profile-1",
+        context=context,
+        display=100,
+        ws_port=6100,
+        cdp_port=5100,
+    )
+
+    await mgr._on_browser_closed("profile-1")
+
+    context.close.assert_awaited_once()
+    mgr.vnc.stop_vnc.assert_awaited_once_with(100)
+    assert "profile-1" not in mgr.running
+
+
+@pytest.mark.asyncio
+async def test_launch_failure_cleans_failed_playwright_children(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backend import browser_manager as browser_manager_module
+
+    mgr = BrowserManager()
+    monkeypatch.setattr(mgr.vnc, "start_vnc", AsyncMock())
+    monkeypatch.setattr(mgr.vnc, "stop_vnc", AsyncMock())
+    cleanup = AsyncMock()
+    monkeypatch.setattr(mgr, "_cleanup_failed_launch", cleanup)
+    monkeypatch.setattr(browser_manager_module, "_direct_child_pids", MagicMock(return_value={123}))
+    monkeypatch.setattr(
+        browser_manager_module,
+        "launch_persistent_context_async",
+        AsyncMock(side_effect=TimeoutError("launch timed out")),
+    )
+
+    with pytest.raises(TimeoutError):
+        await mgr.launch(_profile_for_launch(tmp_path, clipboard_sync=False))
+
+    cleanup.assert_awaited_once()
+    mgr.vnc.stop_vnc.assert_awaited_once_with(100)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failed_launch_targets_new_playwright_and_profile_chrome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from backend import browser_manager as browser_manager_module
+
+    mgr = BrowserManager()
+    user_data_dir = tmp_path / "profile"
+    cmdlines = {
+        10: "playwright/driver/package/cli.js run-driver",
+        11: "playwright/driver/package/cli.js run-driver",
+        12: f"chrome --user-data-dir={user_data_dir} --remote-debugging-port=5100",
+        13: "unrelated-worker",
+        20: "chrome --type=renderer",
+    }
+    killed: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(browser_manager_module, "_direct_child_pids", MagicMock(return_value=set(cmdlines)))
+    monkeypatch.setattr(browser_manager_module, "_read_proc_cmdline", lambda pid: cmdlines[pid])
+    monkeypatch.setattr(browser_manager_module, "_descendant_pids", lambda _pids: {20})
+    monkeypatch.setattr(browser_manager_module, "_pid_exists", lambda _pid: False)
+    monkeypatch.setattr(browser_manager_module, "_reap_exited_children", MagicMock(return_value=0))
+
+    async def no_sleep(_seconds: float):
+        return None
+
+    monkeypatch.setattr(browser_manager_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(browser_manager_module.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    await mgr._cleanup_failed_launch(user_data_dir, 5100, children_before_launch={10})
+
+    term_pids = {pid for pid, sig in killed if sig == browser_manager_module.signal.SIGTERM}
+    assert term_pids == {11, 12, 20}
+    assert 10 not in term_pids
+    assert 13 not in term_pids
+
+
 # ── _allocate_cdp_port ───────────────────────────────────────────────────────
 
 
@@ -262,3 +465,50 @@ def test_init_idempotent(tmp_path: Path):
     # Second call should NOT overwrite (file already exists)
     _init_profile_defaults(tmp_path)
     assert bookmarks_path.read_text() == "SENTINEL"
+
+
+def test_restore_last_session_defaults_to_enabled():
+    assert _restore_last_session_enabled({}) is True
+    assert _restore_last_session_enabled({"restore_last_session": None}) is True
+    assert _restore_last_session_enabled({"restore_last_session": 1}) is True
+    assert _restore_last_session_enabled({"restore_last_session": 0}) is False
+
+
+def test_configure_session_restore_enables_preference_without_overwriting_existing(tmp_path: Path):
+    prefs_path = tmp_path / "Default" / "Preferences"
+    prefs_path.parent.mkdir(parents=True)
+    prefs_path.write_text(json.dumps({"default_search_provider": {"enabled": True}}))
+
+    _configure_session_restore(tmp_path, True)
+
+    prefs = json.loads(prefs_path.read_text())
+    assert prefs["session"]["restore_on_startup"] == 1
+    assert prefs["default_search_provider"]["enabled"] is True
+
+
+def test_configure_session_restore_disables_manager_forced_restore(tmp_path: Path):
+    prefs_path = tmp_path / "Default" / "Preferences"
+    prefs_path.parent.mkdir(parents=True)
+    prefs_path.write_text(json.dumps({"session": {"restore_on_startup": 1}}))
+
+    _configure_session_restore(tmp_path, False)
+
+    prefs = json.loads(prefs_path.read_text())
+    assert "session" not in prefs
+
+
+def test_configure_session_restore_does_not_remove_custom_startup_urls(tmp_path: Path):
+    prefs_path = tmp_path / "Default" / "Preferences"
+    prefs_path.parent.mkdir(parents=True)
+    prefs_path.write_text(json.dumps({
+        "session": {
+            "restore_on_startup": 4,
+            "startup_urls": ["https://example.com"],
+        }
+    }))
+
+    _configure_session_restore(tmp_path, False)
+
+    prefs = json.loads(prefs_path.read_text())
+    assert prefs["session"]["restore_on_startup"] == 4
+    assert prefs["session"]["startup_urls"] == ["https://example.com"]

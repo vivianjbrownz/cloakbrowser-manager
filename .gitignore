@@ -3,10 +3,15 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Node
 node_modules/
 frontend/dist/
+frontend/tsconfig.tsbuildinfo
+coverage/
 
 # IDE
 .vscode/
@@ -14,6 +19,15 @@ frontend/dist/
 
 # OS
 .DS_Store
+
+# Local config and runtime data
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+*.log
 
 # Deploy
 deploy.sh

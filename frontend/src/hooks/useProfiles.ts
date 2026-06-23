@@ -63,6 +63,32 @@ export function useProfiles() {
     [],
   );
 
+  const archive = useCallback(
+    async (id: string) => {
+      try {
+        const profile = await api.archiveProfile(id);
+        setProfiles((prev) => prev.map((p) => (p.id === id ? profile : p)));
+        return profile;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to archive profile");
+      }
+    },
+    [],
+  );
+
+  const restore = useCallback(
+    async (id: string) => {
+      try {
+        const profile = await api.restoreProfile(id);
+        setProfiles((prev) => prev.map((p) => (p.id === id ? profile : p)));
+        return profile;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to restore profile");
+      }
+    },
+    [],
+  );
+
   const launch = useCallback(
     async (id: string) => {
       try {
@@ -88,5 +114,5 @@ export function useProfiles() {
     [refresh],
   );
 
-  return { profiles, loading, error, refresh, create, update, remove, launch, stop };
+  return { profiles, loading, error, refresh, create, update, remove, archive, restore, launch, stop };
 }
