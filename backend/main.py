@@ -10,8 +10,10 @@ import asyncio
 import csv
 import hmac
 import io
+import json
 import logging
 import os
+import re
 import struct
 import shutil
 from contextlib import asynccontextmanager, suppress
@@ -72,9 +74,78 @@ logging.getLogger("asyncio").setLevel(logging.WARNING)
 # If not set, all routes are open (local dev). If set, all /api/* routes
 # (except /api/auth/* and /api/status) require Bearer token or cookie.
 AUTH_TOKEN: str | None = os.environ.get("AUTH_TOKEN") or None
+AGENTOS_SCOPED_AUTH_SECRET: str | None = os.environ.get("AGENTOS_SCOPED_AUTH_SECRET") or None
+AGENTOS_SCOPED_USER_MAP_FILE: str | None = os.environ.get("AGENTOS_SCOPED_USER_MAP_FILE") or None
+try:
+    AGENTOS_SCOPED_USER_MAP: dict[str, str] = {
+        str(email).strip().lower(): str(profile_id).strip()
+        for email, profile_id in json.loads(os.environ.get("AGENTOS_SCOPED_USER_MAP", "{}")).items()
+        if str(email).strip() and str(profile_id).strip()
+    }
+except (TypeError, ValueError, json.JSONDecodeError):
+    logger.error("AGENTOS_SCOPED_USER_MAP is not a valid JSON object")
+    AGENTOS_SCOPED_USER_MAP = {}
+
+
+def _scoped_user_map() -> dict[str, str]:
+    if AGENTOS_SCOPED_USER_MAP_FILE:
+        try:
+            payload = json.loads(Path(AGENTOS_SCOPED_USER_MAP_FILE).read_text())
+            return {
+                str(email).strip().lower(): str(profile_id).strip()
+                for email, profile_id in payload.items()
+                if str(email).strip() and str(profile_id).strip()
+            }
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("Unable to load AgentOS scoped user map file")
+            return {}
+    return AGENTOS_SCOPED_USER_MAP
 
 # Paths that bypass authentication even when AUTH_TOKEN is set
 _AUTH_EXEMPT = frozenset({"/api/auth/status", "/api/auth/login", "/api/status"})
+
+
+def _header(scope: Scope, name: bytes) -> str | None:
+    for key, value in scope.get("headers", []):
+        if key == name:
+            return value.decode("latin-1").strip()
+    return None
+
+
+def _scoped_identity(scope: Scope) -> tuple[str, str] | None:
+    supplied = _header(scope, b"x-agentos-scoped-secret")
+    if not supplied or not AGENTOS_SCOPED_AUTH_SECRET:
+        return None
+    if not hmac.compare_digest(supplied, AGENTOS_SCOPED_AUTH_SECRET):
+        return None
+    email = (_header(scope, b"x-agentos-email") or "").lower()
+    profile_id = _scoped_user_map().get(email)
+    if not profile_id:
+        return None
+    return email, profile_id
+
+
+def _scoped_api_allowed(scope: Scope, profile_id: str) -> bool:
+    path = scope["path"]
+    method = scope.get("method", "GET")
+    if path == "/api/auth/status":
+        return method == "GET"
+    if path == "/api/profiles":
+        return method == "GET"
+    escaped = re.escape(profile_id)
+    allowed = {
+        (rf"^/api/profiles/{escaped}$", "GET"),
+        (rf"^/api/profiles/{escaped}/status$", "GET"),
+        (rf"^/api/profiles/{escaped}/launch$", "POST"),
+        (rf"^/api/profiles/{escaped}/stop$", "POST"),
+        (rf"^/api/profiles/{escaped}/ui/start$", "POST"),
+        (rf"^/api/profiles/{escaped}/ui/stop$", "POST"),
+        (rf"^/api/profiles/{escaped}/clipboard$", "GET"),
+        (rf"^/api/profiles/{escaped}/clipboard$", "POST"),
+    }
+    if scope["type"] == "websocket":
+        return bool(re.fullmatch(rf"/api/profiles/{escaped}/vnc", path))
+    return any(candidate_method == method and re.fullmatch(pattern, path) for pattern, candidate_method in allowed)
 
 
 def _check_auth(scope: Scope) -> bool:
@@ -177,6 +248,22 @@ class AuthMiddleware:
 
         path = scope["path"]
 
+        scoped = _scoped_identity(scope)
+        if scoped:
+            email, profile_id = scoped
+            scope.setdefault("state", {})["agentos_scoped_email"] = email
+            scope["state"]["agentos_scoped_profile_id"] = profile_id
+            if not path.startswith("/api/") or _scoped_api_allowed(scope, profile_id):
+                await self.app(scope, receive, send)
+                return
+            if scope["type"] == "websocket":
+                await receive()
+                await send({"type": "websocket.close", "code": 4403, "reason": "Profile not assigned"})
+            else:
+                response = JSONResponse({"detail": "Scoped browser access only"}, status_code=403)
+                await response(scope, receive, send)
+            return
+
         # Skip auth for exempt endpoints and non-API paths (static frontend)
         if path in _AUTH_EXEMPT or not path.startswith("/api/"):
             await self.app(scope, receive, send)
@@ -198,6 +285,21 @@ class AuthMiddleware:
 
 # Singleton browser manager
 browser_mgr = BrowserManager()
+_proxy_launch_lock = asyncio.Lock()
+
+
+def _normalize_proxy_resource(value: object) -> str | None:
+    """Return a stable comparison key without logging proxy credentials."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if "://" not in raw:
+        raw = f"http://{raw}"
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    username = parsed.username or ""
+    return f"{parsed.scheme.lower()}://{username}@{host}:{port or ''}"
 
 _CHILD_REAPER_INTERVAL_SECONDS = 30
 _child_reaper_task: asyncio.Task | None = None
@@ -464,10 +566,20 @@ async def auth_status(request: starlette.requests.Request):
 
     Exempt from auth middleware so the frontend can always call it.
     """
+    scoped = _scoped_identity(request.scope)
+    if scoped:
+        email, profile_id = scoped
+        return {
+            "auth_required": False,
+            "authenticated": True,
+            "role": "scoped",
+            "email": email,
+            "assigned_profile_id": profile_id,
+        }
     authenticated = False
     if AUTH_TOKEN:
         authenticated = _check_auth(request.scope)
-    return {"auth_required": AUTH_TOKEN is not None, "authenticated": authenticated}
+    return {"auth_required": AUTH_TOKEN is not None, "authenticated": authenticated, "role": "admin"}
 
 
 @app.post("/api/auth/login")
@@ -521,8 +633,11 @@ def _safe_profile_data_dir(profile: dict) -> Path:
 
 
 @app.get("/api/profiles", response_model=list[ProfileResponse])
-async def list_profiles():
+async def list_profiles(request: Request):
     profiles = db.list_profiles()
+    assigned_profile_id = request.scope.get("state", {}).get("agentos_scoped_profile_id")
+    if assigned_profile_id:
+        profiles = [profile for profile in profiles if profile["id"] == assigned_profile_id]
     result = []
     for p in profiles:
         status = browser_mgr.get_status(p["id"])
@@ -1021,13 +1136,23 @@ async def launch_profile(profile_id: str):
     if profile_id in browser_mgr.running:
         raise HTTPException(status_code=409, detail="Profile is already running")
 
-    try:
-        running = await browser_mgr.launch(profile)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        logger.error("Failed to launch profile %s: %s", profile_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to launch browser")
+    async with _proxy_launch_lock:
+        normalized_proxy = _normalize_proxy_resource(profile.get("proxy"))
+        if normalized_proxy:
+            for running_profile_id in browser_mgr.running:
+                if running_profile_id == profile_id:
+                    continue
+                other = db.get_profile(running_profile_id)
+                if other and _normalize_proxy_resource(other.get("proxy")) == normalized_proxy:
+                    raise HTTPException(status_code=409, detail="Proxy is already in use by another profile")
+
+        try:
+            running = await browser_mgr.launch(profile)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            logger.error("Failed to launch profile %s: %s", profile_id, exc)
+            raise HTTPException(status_code=500, detail="Failed to launch browser")
 
     return LaunchResponse(
         profile_id=profile_id,
@@ -1046,6 +1171,30 @@ async def stop_profile(profile_id: str):
     await _stop_xclip_for_display(running.display)
     await browser_mgr.stop(profile_id)
     return {"ok": True}
+
+
+@app.post("/api/profiles/{profile_id}/ui/start", response_model=LaunchResponse)
+async def start_profile_ui(profile_id: str):
+    """Restart an assigned browser headed so a human can view and control it."""
+    profile = db.get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    if profile_id in browser_mgr.running:
+        await stop_profile(profile_id)
+    db.update_profile(profile_id, headless=False)
+    return await launch_profile(profile_id)
+
+
+@app.post("/api/profiles/{profile_id}/ui/stop", response_model=LaunchResponse)
+async def stop_profile_ui(profile_id: str):
+    """Return a human-visible browser to the lower-overhead headless mode."""
+    profile = db.get_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    if profile_id in browser_mgr.running:
+        await stop_profile(profile_id)
+    db.update_profile(profile_id, headless=True)
+    return await launch_profile(profile_id)
 
 
 @app.get("/api/profiles/{profile_id}/status", response_model=ProfileStatusResponse)

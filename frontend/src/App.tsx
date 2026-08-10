@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Lock, Microscope, PanelLeftClose, PanelLeft, Table2 } from "lucide-react";
+import { Bot, Lock, Microscope, PanelLeftClose, PanelLeft, Table2 } from "lucide-react";
 import { useProfiles } from "./hooks/useProfiles";
 import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
@@ -20,13 +20,15 @@ type View = "inventory" | "registration" | "research" | "empty" | "create" | "ed
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [authRequired, setAuthRequired] = useState(false);
+  const [scopedMode, setScopedMode] = useState(false);
 
   useEffect(() => {
     setOnUnauthorized(() => setAuthState("required"));
 
     api.authStatus()
-      .then(({ auth_required, authenticated }) => {
+      .then(({ auth_required, authenticated, role }) => {
         setAuthRequired(auth_required);
+        setScopedMode(role === "scoped");
         if (!auth_required || authenticated) {
           setAuthState("ok");
         } else {
@@ -80,6 +82,7 @@ export default function App() {
   return (
     <AppContent
       authRequired={authRequired}
+      scopedMode={scopedMode}
       onLogout={async () => {
         await api.logout();
         setAuthState("required");
@@ -90,10 +93,11 @@ export default function App() {
 
 interface AppContentProps {
   authRequired: boolean;
+  scopedMode: boolean;
   onLogout: () => void;
 }
 
-function AppContent({ authRequired, onLogout }: AppContentProps) {
+function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
   const { profiles, loading, error, refresh, create, update, remove, archive, restore, launch, stop } = useProfiles();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("inventory");
@@ -176,10 +180,71 @@ function AppContent({ authRequired, onLogout }: AppContentProps) {
     setView("edit");
   }, []);
 
+  const handleStartUi = useCallback(async (profileId: string) => {
+    await api.startProfileUi(profileId);
+    await refresh();
+  }, [refresh]);
+
+  const handleStopUi = useCallback(async (profileId: string) => {
+    await api.stopProfileUi(profileId);
+    await refresh();
+  }, [refresh]);
+
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center">
         <div className="text-gray-500 text-sm">Loading...</div>
+      </div>
+    );
+  }
+
+  if (scopedMode) {
+    const assigned = profiles[0] ?? null;
+    return (
+      <div className="h-screen flex flex-col bg-surface-0">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface-1">
+          <div className="flex items-center gap-2">
+            <Bot className="h-4 w-4 text-accent" />
+            <span className="text-sm font-semibold">AgentOS Browser</span>
+            {assigned && <span className="text-xs text-gray-500">{assigned.name}</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            {assigned && !assigned.is_archived && !assigned.headless && assigned.status === "running" && (
+              <button onClick={() => handleStopUi(assigned.id)} className="rounded bg-surface-2 px-3 py-1.5 text-xs text-gray-200 hover:bg-surface-3">
+                关闭 UI，返回 Agent
+              </button>
+            )}
+            <ThemeToggle />
+          </div>
+        </div>
+        <div className="px-4 py-2 text-xs text-cyan-200 bg-cyan-950/40 border-b border-cyan-900/60">
+          这里始终是分配给你的独立浏览器。打开此页面进行人工接管时，请让 AgentOS 暂停浏览器操作；完成后在对话中让它继续。
+        </div>
+        {error && <div className="px-4 py-2 text-sm text-red-400">{error}</div>}
+        <div className="flex-1 min-h-0">
+          {!assigned && (
+            <div className="h-full flex items-center justify-center text-sm text-gray-500">No browser profile is assigned.</div>
+          )}
+          {assigned && (assigned.status === "stopped" || assigned.headless) && (
+            <div className="h-full flex flex-col gap-4 items-center justify-center">
+              <p className="text-sm text-gray-400">
+                {assigned.status === "running" ? "Agent 正在无头模式操作；打开 UI 会保留资料并切换到可视模式。" : "浏览器当前未运行；打开 UI 后才启用图形界面。"}
+              </p>
+              <button onClick={() => handleStartUi(assigned.id)} className="rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90">
+                打开浏览器 UI
+              </button>
+            </div>
+          )}
+          {assigned && assigned.status === "running" && !assigned.headless && (
+            <ProfileViewer
+              key={assigned.id}
+              profileId={assigned.id}
+              cdpUrl={null}
+              clipboardSync={assigned.clipboard_sync}
+              onDisconnect={refresh}
+            />
+          )}
+        </div>
       </div>
     );
   }

@@ -39,6 +39,23 @@ def client_auth(tmp_db, monkeypatch):
         yield client
 
 
+@pytest.fixture()
+def client_scoped(tmp_db, monkeypatch):
+    from backend import database as db
+    from backend import main
+
+    first = db.create_profile(name="Assigned")
+    db.create_profile(name="Hidden")
+    monkeypatch.setattr(main, "AUTH_TOKEN", "test-secret")
+    monkeypatch.setattr(main, "AGENTOS_SCOPED_AUTH_SECRET", "scoped-secret")
+    monkeypatch.setattr(main, "AGENTOS_SCOPED_USER_MAP", {"user@example.com": first["id"]})
+    monkeypatch.setattr(main.browser_mgr, "cleanup_stale", AsyncMock())
+    monkeypatch.setattr(main.browser_mgr, "cleanup_all", AsyncMock())
+    monkeypatch.setattr(main.browser_mgr.vnc, "cleanup_stale", AsyncMock())
+    with TestClient(main.app) as client:
+        yield client, first
+
+
 # ── Group A: AUTH_TOKEN not set ──────────────────────────────────────────────
 
 
@@ -137,3 +154,28 @@ def test_auth_status_always_accessible(client_auth: TestClient):
     """GET /api/auth/status must work without auth (frontend bootstrap)."""
     resp = client_auth.get("/api/auth/status")
     assert resp.status_code == 200
+
+
+def test_scoped_identity_sees_only_assigned_profile(client_scoped):
+    client, assigned = client_scoped
+    headers = {
+        "X-AgentOS-Scoped-Secret": "scoped-secret",
+        "X-AgentOS-Email": "USER@example.com",
+    }
+    status = client.get("/api/auth/status", headers=headers)
+    assert status.status_code == 200
+    assert status.json()["role"] == "scoped"
+    assert status.json()["assigned_profile_id"] == assigned["id"]
+    profiles = client.get("/api/profiles", headers=headers)
+    assert profiles.status_code == 200
+    assert [profile["id"] for profile in profiles.json()] == [assigned["id"]]
+
+
+def test_scoped_identity_cannot_use_admin_apis(client_scoped):
+    client, assigned = client_scoped
+    headers = {
+        "X-AgentOS-Scoped-Secret": "scoped-secret",
+        "X-AgentOS-Email": "user@example.com",
+    }
+    assert client.delete(f"/api/profiles/{assigned['id']}", headers=headers).status_code == 403
+    assert client.get("/api/inventory/rows", headers=headers).status_code == 403

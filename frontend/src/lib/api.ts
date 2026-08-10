@@ -305,7 +305,13 @@ async function request<T>(
 
 export const api = {
   authStatus: () =>
-    request<{ auth_required: boolean; authenticated: boolean }>("/api/auth/status"),
+    request<{
+      auth_required: boolean;
+      authenticated: boolean;
+      role?: "admin" | "scoped";
+      email?: string;
+      assigned_profile_id?: string;
+    }>("/api/auth/status"),
 
   login: (token: string) =>
     request<{ ok: boolean }>("/api/auth/login", {
@@ -346,6 +352,12 @@ export const api = {
 
   stopProfile: (id: string) =>
     request<{ ok: boolean }>(`/api/profiles/${id}/stop`, { method: "POST" }),
+
+  startProfileUi: (id: string) =>
+    request<LaunchResult>(`/api/profiles/${id}/ui/start`, { method: "POST" }),
+
+  stopProfileUi: (id: string) =>
+    request<LaunchResult>(`/api/profiles/${id}/ui/stop`, { method: "POST" }),
 
   getStatus: () => request<SystemStatus>("/api/status"),
 
