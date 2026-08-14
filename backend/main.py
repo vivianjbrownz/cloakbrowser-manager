@@ -303,6 +303,12 @@ def _normalize_proxy_resource(value: object) -> str | None:
 
 _CHILD_REAPER_INTERVAL_SECONDS = 30
 _child_reaper_task: asyncio.Task | None = None
+_agentos_idle_reaper_task: asyncio.Task | None = None
+_AGENTOS_PROFILE_IDLE_SECONDS = max(
+    0, int(os.environ.get("AGENTOS_PROFILE_IDLE_TIMEOUT_SECONDS", "1800"))
+)
+_profile_last_activity: dict[str, float] = {}
+_profile_live_connections: dict[str, int] = {}
 
 # Frontend build directory (React production build)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
@@ -338,6 +344,69 @@ async def _periodic_child_reaper():
         reaped = _reap_exited_children()
         if reaped:
             logger.info("Reaped %d exited child process(es)", reaped)
+
+
+def _profile_is_agentos(profile: dict) -> bool:
+    for item in profile.get("tags") or []:
+        value = item.get("tag") if isinstance(item, dict) else item
+        if str(value).strip().lower() == "agentos":
+            return True
+    return False
+
+
+def _mark_profile_activity(profile_id: str) -> None:
+    _profile_last_activity[profile_id] = asyncio.get_running_loop().time()
+
+
+def _profile_connection_opened(profile_id: str) -> None:
+    _profile_live_connections[profile_id] = _profile_live_connections.get(profile_id, 0) + 1
+    _mark_profile_activity(profile_id)
+
+
+def _profile_connection_closed(profile_id: str) -> None:
+    remaining = max(0, _profile_live_connections.get(profile_id, 0) - 1)
+    if remaining:
+        _profile_live_connections[profile_id] = remaining
+    else:
+        _profile_live_connections.pop(profile_id, None)
+    _mark_profile_activity(profile_id)
+
+
+async def _reap_idle_agentos_profiles_once(now: float | None = None) -> list[str]:
+    if _AGENTOS_PROFILE_IDLE_SECONDS <= 0:
+        return []
+    current = asyncio.get_running_loop().time() if now is None else now
+    stopped: list[str] = []
+    for profile_id, running in list(browser_mgr.running.items()):
+        profile = db.get_profile(profile_id)
+        if not profile or not _profile_is_agentos(profile):
+            continue
+        if _profile_live_connections.get(profile_id, 0) > 0:
+            continue
+        last_activity = _profile_last_activity.setdefault(profile_id, current)
+        if current - last_activity < _AGENTOS_PROFILE_IDLE_SECONDS:
+            continue
+        try:
+            await _stop_xclip_for_display(running.display)
+            await browser_mgr.stop(profile_id)
+        except Exception as exc:
+            logger.warning("AgentOS idle profile stop failed for %s: %s", profile_id, exc)
+            _profile_last_activity[profile_id] = current
+            continue
+        _profile_last_activity.pop(profile_id, None)
+        _profile_live_connections.pop(profile_id, None)
+        stopped.append(profile_id)
+        logger.info("Stopped AgentOS browser profile %s after %d idle seconds", profile_id, _AGENTOS_PROFILE_IDLE_SECONDS)
+    return stopped
+
+
+async def _periodic_agentos_idle_reaper() -> None:
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await _reap_idle_agentos_profiles_once()
+        except Exception:
+            logger.exception("AgentOS idle profile reaper failed")
 
 
 # ---------------------------------------------------------------------------
@@ -534,10 +603,11 @@ def _filter_rfb_client_messages(data: bytes) -> bytes:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _child_reaper_task
+    global _child_reaper_task, _agentos_idle_reaper_task
     db.init_db()
     await browser_mgr.cleanup_stale()
     _child_reaper_task = asyncio.create_task(_periodic_child_reaper())
+    _agentos_idle_reaper_task = asyncio.create_task(_periodic_agentos_idle_reaper())
     browser_mgr._auto_launch_task = asyncio.create_task(browser_mgr.auto_launch_all())
     logger.info("CloakBrowser Manager started")
     yield
@@ -548,6 +618,9 @@ async def lifespan(app: FastAPI):
     if _child_reaper_task and not _child_reaper_task.done():
         _child_reaper_task.cancel()
         await asyncio.gather(_child_reaper_task, return_exceptions=True)
+    if _agentos_idle_reaper_task and not _agentos_idle_reaper_task.done():
+        _agentos_idle_reaper_task.cancel()
+        await asyncio.gather(_agentos_idle_reaper_task, return_exceptions=True)
     await _stop_all_xclip()
     await browser_mgr.cleanup_all()
     _reap_exited_children()
@@ -1154,6 +1227,7 @@ async def launch_profile(profile_id: str):
             logger.error("Failed to launch profile %s: %s", profile_id, exc)
             raise HTTPException(status_code=500, detail="Failed to launch browser")
 
+    _mark_profile_activity(profile_id)
     return LaunchResponse(
         profile_id=profile_id,
         status="running",
@@ -1170,6 +1244,8 @@ async def stop_profile(profile_id: str):
         raise HTTPException(status_code=404, detail="Profile is not running")
     await _stop_xclip_for_display(running.display)
     await browser_mgr.stop(profile_id)
+    _profile_last_activity.pop(profile_id, None)
+    _profile_live_connections.pop(profile_id, None)
     return {"ok": True}
 
 
@@ -1219,6 +1295,7 @@ async def open_profile_url(profile_id: str, body: ProfileOpenUrlRequest):
         raise HTTPException(status_code=409, detail="Profile must be running before opening URLs")
 
     try:
+        _mark_profile_activity(profile_id)
         page = await running.context.new_page()
         await page.goto(body.url, wait_until="domcontentloaded", timeout=15000)
         await page.bring_to_front()
@@ -1303,6 +1380,7 @@ async def set_clipboard(profile_id: str, body: ClipboardRequest):
     running = browser_mgr.running.get(profile_id)
     if not running:
         raise HTTPException(status_code=404, detail="Profile not running")
+    _mark_profile_activity(profile_id)
 
     import os
 
@@ -1343,6 +1421,7 @@ async def get_clipboard(profile_id: str):
     running = browser_mgr.running.get(profile_id)
     if not running:
         raise HTTPException(status_code=404, detail="Profile not running")
+    _mark_profile_activity(profile_id)
 
     # Read Chrome's current text selection via Playwright.
     # Chrome's native copy (via VNC Ctrl+C) doesn't write to X11 clipboard
@@ -1404,6 +1483,7 @@ async def vnc_proxy(websocket: WebSocket, profile_id: str):
     requested = websocket.scope.get("subprotocols", [])
     subprotocol = "binary" if "binary" in requested else None
     await websocket.accept(subprotocol=subprotocol)
+    _profile_connection_opened(profile_id)
 
     import websockets
 
@@ -1545,6 +1625,7 @@ async def vnc_proxy(websocket: WebSocket, profile_id: str):
     except Exception as exc:
         logger.error("VNC proxy connect error for %s: %s: %s", profile_id, type(exc).__name__, exc)
     finally:
+        _profile_connection_closed(profile_id)
         try:
             await websocket.close()
         except Exception as exc:
@@ -1562,6 +1643,7 @@ async def cdp_info(profile_id: str):
     running = browser_mgr.running.get(profile_id)
     if not running:
         raise HTTPException(status_code=404, detail="Profile not running")
+    _mark_profile_activity(profile_id)
     return {
         "cdp_url": f"/api/profiles/{profile_id}/cdp",
         "usage": "playwright.chromium.connect_over_cdp('http://<host>/api/profiles/"
@@ -1576,6 +1658,7 @@ async def cdp_json_version(profile_id: str, request: Request):
     running = browser_mgr.running.get(profile_id)
     if not running:
         raise HTTPException(status_code=404, detail="Profile not running")
+    _mark_profile_activity(profile_id)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -1603,6 +1686,7 @@ async def cdp_json_list(profile_id: str, request: Request):
     running = browser_mgr.running.get(profile_id)
     if not running:
         raise HTTPException(status_code=404, detail="Profile not running")
+    _mark_profile_activity(profile_id)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -1626,7 +1710,7 @@ async def cdp_json_list(profile_id: str, request: Request):
 
 
 async def _proxy_cdp_websocket(
-    websocket: WebSocket, target_url: str, label: str,
+    websocket: WebSocket, target_url: str, label: str, profile_id: str,
 ) -> None:
     """Bidirectional WebSocket proxy between a FastAPI client and a CDP target.
 
@@ -1634,6 +1718,7 @@ async def _proxy_cdp_websocket(
     """
     import websockets
 
+    _profile_connection_opened(profile_id)
     try:
         async with websockets.connect(
             target_url, max_size=None, ping_interval=None, ping_timeout=None
@@ -1679,6 +1764,7 @@ async def _proxy_cdp_websocket(
     except Exception as exc:
         logger.error("%s error: %s", label, exc)
     finally:
+        _profile_connection_closed(profile_id)
         try:
             await websocket.close()
         except Exception as exc:
@@ -1710,7 +1796,7 @@ async def cdp_proxy(websocket: WebSocket, profile_id: str):
         await websocket.close(code=4005, reason="CDP not available")
         return
 
-    await _proxy_cdp_websocket(websocket, ws_url, f"CDP proxy [{profile_id}]")
+    await _proxy_cdp_websocket(websocket, ws_url, f"CDP proxy [{profile_id}]", profile_id)
 
 
 @app.websocket("/api/profiles/{profile_id}/cdp/devtools/{path:path}")
@@ -1727,7 +1813,7 @@ async def cdp_page_proxy(websocket: WebSocket, profile_id: str, path: str):
     await websocket.accept()
 
     target_url = f"ws://127.0.0.1:{running.cdp_port}/devtools/{path}"
-    await _proxy_cdp_websocket(websocket, target_url, f"CDP page proxy [{profile_id}]")
+    await _proxy_cdp_websocket(websocket, target_url, f"CDP page proxy [{profile_id}]", profile_id)
 
 
 # ── Static Frontend ───────────────────────────────────────────────────────────

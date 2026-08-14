@@ -14,7 +14,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: stevenbbrooksz/cloakbrowser-manager
+  IMAGE_NAME: ${{ github.repository_owner }}/cloakbrowser-manager
 
 jobs:
   publish:
@@ -43,7 +43,7 @@ jobs:
             type=ref,event=tag
             type=sha,prefix=sha-
           labels: |
-            org.opencontainers.image.source=https://github.com/stevenbbrooksz/cloakbrowser-manager
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=BeginOS inventory build of CloakBrowser Manager
             org.opencontainers.image.licenses=MIT
 
