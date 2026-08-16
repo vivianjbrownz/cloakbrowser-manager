@@ -23,7 +23,7 @@ Free, self-hosted alternative to Multilogin, GoLogin, and AdsPower.
 <img src="https://i.imgur.com/XFYn1qY.png" width="800" alt="CloakBrowser Manager — Profile Settings">
 </p>
 
-Each profile is an isolated CloakBrowser instance with its own fingerprint, proxy, cookies, and session data. Profiles persist across restarts. Everything runs in one Docker container.
+Each profile is an isolated CloakBrowser instance with its own fingerprint, proxy, cookies, and session data. Profiles persist across restarts. Everything runs in one Docker container. Running profiles with no UI/VNC or CDP connection sleep after 20 minutes; under 2 GiB available memory, disconnected profiles become eligible after 2 minutes. Sleeping preserves the profile fingerprint and session data.
 
 ## BeginOS Inventory Build
 

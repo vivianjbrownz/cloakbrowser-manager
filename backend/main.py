@@ -303,10 +303,17 @@ def _normalize_proxy_resource(value: object) -> str | None:
 
 _CHILD_REAPER_INTERVAL_SECONDS = 30
 _child_reaper_task: asyncio.Task | None = None
-_agentos_idle_reaper_task: asyncio.Task | None = None
-_AGENTOS_PROFILE_IDLE_SECONDS = max(
-    0, int(os.environ.get("AGENTOS_PROFILE_IDLE_TIMEOUT_SECONDS", "1800"))
+_profile_idle_reaper_task: asyncio.Task | None = None
+_PROFILE_IDLE_SECONDS = max(
+    0, int(os.environ.get("AGENTOS_PROFILE_IDLE_TIMEOUT_SECONDS", "1200"))
 )
+_PROFILE_PRESSURE_MIN_AVAILABLE_MB = max(
+    0, int(os.environ.get("AGENTOS_PROFILE_MEMORY_PRESSURE_MB", "2048"))
+)
+_PROFILE_PRESSURE_GRACE_SECONDS = max(
+    0, int(os.environ.get("AGENTOS_PROFILE_PRESSURE_GRACE_SECONDS", "120"))
+)
+_PROFILE_MEMORY_RECHECK_SECONDS = 2
 _profile_last_activity: dict[str, float] = {}
 _profile_live_connections: dict[str, int] = {}
 
@@ -346,12 +353,14 @@ async def _periodic_child_reaper():
             logger.info("Reaped %d exited child process(es)", reaped)
 
 
-def _profile_is_agentos(profile: dict) -> bool:
-    for item in profile.get("tags") or []:
-        value = item.get("tag") if isinstance(item, dict) else item
-        if str(value).strip().lower() == "agentos":
-            return True
-    return False
+def _available_memory_mb() -> int:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        logger.warning("Could not read available host memory for browser idle protection")
+    return 2**31 - 1
 
 
 def _mark_profile_activity(profile_id: str) -> None:
@@ -372,41 +381,81 @@ def _profile_connection_closed(profile_id: str) -> None:
     _mark_profile_activity(profile_id)
 
 
-async def _reap_idle_agentos_profiles_once(now: float | None = None) -> list[str]:
-    if _AGENTOS_PROFILE_IDLE_SECONDS <= 0:
+async def _stop_idle_profile(
+    profile_id: str,
+    running,
+    *,
+    reason: str,
+    idle_seconds: int,
+    available_memory_mb: int,
+) -> bool:
+    try:
+        await _stop_xclip_for_display(running.display)
+        await browser_mgr.stop(profile_id)
+    except Exception as exc:
+        logger.warning("Idle profile stop failed for %s (%s): %s", profile_id, reason, exc)
+        return False
+    _profile_last_activity.pop(profile_id, None)
+    _profile_live_connections.pop(profile_id, None)
+    logger.info(
+        "Stopped browser profile %s reason=%s idle_seconds=%d available_memory_mb=%d",
+        profile_id,
+        reason,
+        idle_seconds,
+        available_memory_mb,
+    )
+    return True
+
+
+async def _reap_idle_profiles_once(now: float | None = None) -> list[str]:
+    normal_enabled = _PROFILE_IDLE_SECONDS > 0
+    pressure_enabled = _PROFILE_PRESSURE_MIN_AVAILABLE_MB > 0
+    if not normal_enabled and not pressure_enabled:
         return []
     current = asyncio.get_running_loop().time() if now is None else now
-    stopped: list[str] = []
+    available_memory = _available_memory_mb() if pressure_enabled else _PROFILE_PRESSURE_MIN_AVAILABLE_MB
+    under_pressure = pressure_enabled and available_memory < _PROFILE_PRESSURE_MIN_AVAILABLE_MB
+    eligible: list[tuple[float, str, object, int]] = []
     for profile_id, running in list(browser_mgr.running.items()):
-        profile = db.get_profile(profile_id)
-        if not profile or not _profile_is_agentos(profile):
+        if not db.get_profile(profile_id):
             continue
         if _profile_live_connections.get(profile_id, 0) > 0:
             continue
         last_activity = _profile_last_activity.setdefault(profile_id, current)
-        if current - last_activity < _AGENTOS_PROFILE_IDLE_SECONDS:
-            continue
-        try:
-            await _stop_xclip_for_display(running.display)
-            await browser_mgr.stop(profile_id)
-        except Exception as exc:
-            logger.warning("AgentOS idle profile stop failed for %s: %s", profile_id, exc)
+        idle_seconds = max(0, int(current - last_activity))
+        required_idle = _PROFILE_PRESSURE_GRACE_SECONDS if under_pressure else _PROFILE_IDLE_SECONDS
+        if (under_pressure or normal_enabled) and idle_seconds >= required_idle:
+            eligible.append((last_activity, profile_id, running, idle_seconds))
+
+    stopped: list[str] = []
+    reason = "memory_pressure" if under_pressure else "idle_timeout"
+    for _, profile_id, running, idle_seconds in sorted(eligible):
+        if not await _stop_idle_profile(
+            profile_id,
+            running,
+            reason=reason,
+            idle_seconds=idle_seconds,
+            available_memory_mb=available_memory,
+        ):
             _profile_last_activity[profile_id] = current
             continue
-        _profile_last_activity.pop(profile_id, None)
-        _profile_live_connections.pop(profile_id, None)
         stopped.append(profile_id)
-        logger.info("Stopped AgentOS browser profile %s after %d idle seconds", profile_id, _AGENTOS_PROFILE_IDLE_SECONDS)
+        if under_pressure:
+            if _PROFILE_MEMORY_RECHECK_SECONDS:
+                await asyncio.sleep(_PROFILE_MEMORY_RECHECK_SECONDS)
+            available_memory = _available_memory_mb()
+            if available_memory >= _PROFILE_PRESSURE_MIN_AVAILABLE_MB:
+                break
     return stopped
 
 
-async def _periodic_agentos_idle_reaper() -> None:
+async def _periodic_profile_idle_reaper() -> None:
     while True:
         await asyncio.sleep(30)
         try:
-            await _reap_idle_agentos_profiles_once()
+            await _reap_idle_profiles_once()
         except Exception:
-            logger.exception("AgentOS idle profile reaper failed")
+            logger.exception("Browser profile idle reaper failed")
 
 
 # ---------------------------------------------------------------------------
@@ -603,11 +652,11 @@ def _filter_rfb_client_messages(data: bytes) -> bytes:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _child_reaper_task, _agentos_idle_reaper_task
+    global _child_reaper_task, _profile_idle_reaper_task
     db.init_db()
     await browser_mgr.cleanup_stale()
     _child_reaper_task = asyncio.create_task(_periodic_child_reaper())
-    _agentos_idle_reaper_task = asyncio.create_task(_periodic_agentos_idle_reaper())
+    _profile_idle_reaper_task = asyncio.create_task(_periodic_profile_idle_reaper())
     browser_mgr._auto_launch_task = asyncio.create_task(browser_mgr.auto_launch_all())
     logger.info("CloakBrowser Manager started")
     yield
@@ -618,9 +667,9 @@ async def lifespan(app: FastAPI):
     if _child_reaper_task and not _child_reaper_task.done():
         _child_reaper_task.cancel()
         await asyncio.gather(_child_reaper_task, return_exceptions=True)
-    if _agentos_idle_reaper_task and not _agentos_idle_reaper_task.done():
-        _agentos_idle_reaper_task.cancel()
-        await asyncio.gather(_agentos_idle_reaper_task, return_exceptions=True)
+    if _profile_idle_reaper_task and not _profile_idle_reaper_task.done():
+        _profile_idle_reaper_task.cancel()
+        await asyncio.gather(_profile_idle_reaper_task, return_exceptions=True)
     await _stop_all_xclip()
     await browser_mgr.cleanup_all()
     _reap_exited_children()
