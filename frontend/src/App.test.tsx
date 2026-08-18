@@ -94,7 +94,7 @@ describe("scoped employee profile ID", () => {
     render(<App />);
 
     expect(await screen.findByText("Employee Browser")).toBeTruthy();
-    expect(screen.getByText("ID: 87654321")).toBeTruthy();
+    expect(screen.getByText("ID: 567890ab")).toBeTruthy();
     fireEvent.click(screen.getByTitle("复制完整 Profile ID"));
 
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(fullId));

@@ -26,7 +26,7 @@ export function ProfileIdCopy({ profileId, locale = "en", className = "" }: Prof
   const [state, setState] = useState<CopyState>("idle");
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const text = labels[locale];
-  const shortId = profileId.slice(0, 8);
+  const shortId = profileId.slice(-8);
 
   useEffect(() => () => {
     if (resetTimer.current) clearTimeout(resetTimer.current);

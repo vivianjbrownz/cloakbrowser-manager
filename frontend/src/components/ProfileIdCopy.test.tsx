@@ -19,7 +19,7 @@ describe("ProfileIdCopy", () => {
   it("shows a short ID and copies the complete UUID", async () => {
     render(<ProfileIdCopy profileId={fullId} />);
 
-    expect(screen.getByText("ID: 12345678")).toBeTruthy();
+    expect(screen.getByText("ID: 567890ab")).toBeTruthy();
     expect(screen.getByTitle(`Profile ID: ${fullId}`)).toBeTruthy();
     fireEvent.click(screen.getByTitle("Copy full Profile ID"));
 
