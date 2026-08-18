@@ -1,5 +1,5 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Profile } from "../lib/api";
 import { ProfileList } from "./ProfileList";
 
@@ -41,6 +41,13 @@ function makeProfile(overrides: Partial<Profile> = {}): Profile {
   };
 }
 
+beforeEach(() => {
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
+});
+
 afterEach(() => {
   cleanup();
 });
@@ -61,5 +68,23 @@ describe("ProfileList", () => {
 
     expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.queryByText("Archived")).toBeNull();
+  });
+
+  it("copies the full ID without selecting the profile", async () => {
+    const onSelect = vi.fn();
+    const id = "12345678-abcd-4def-8123-1234567890ab";
+    render(
+      <ProfileList
+        profiles={[makeProfile({ id })]}
+        selectedId={null}
+        onSelect={onSelect}
+        onNew={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("Copy full Profile ID"));
+
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(id));
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

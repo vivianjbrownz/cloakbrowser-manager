@@ -1,6 +1,7 @@
 import { Save, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Profile, ProfileCreateData } from "../lib/api";
+import { ProfileIdCopy } from "./ProfileIdCopy";
 
 interface ProfileFormProps {
   profile: Profile | null; // null = create mode
@@ -208,6 +209,12 @@ export function ProfileForm({ profile, onSave, onDelete, onCancel }: ProfileForm
         <section>
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Basic</h3>
           <div className="grid grid-cols-2 gap-3">
+            {isEdit && profile && (
+              <div className="col-span-2">
+                <label className="label">Profile ID</label>
+                <ProfileIdCopy profileId={profile.id} className="mt-1" />
+              </div>
+            )}
             <div className="col-span-2">
               <label className="label">Profile Name</label>
               <input

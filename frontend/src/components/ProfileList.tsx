@@ -1,6 +1,7 @@
 import { Plus, Search, Monitor } from "lucide-react";
 import { useState } from "react";
 import type { Profile } from "../lib/api";
+import { ProfileIdCopy } from "./ProfileIdCopy";
 import { StatusIndicator } from "./StatusIndicator";
 
 interface ProfileListProps {
@@ -54,42 +55,51 @@ export function ProfileList({ profiles, selectedId, onSelect, onNew }: ProfileLi
           </div>
         )}
         {filtered.map((profile) => (
-          <button
+          <div
             key={profile.id}
-            onClick={() => onSelect(profile.id)}
-            className={`w-full text-left px-3 py-2.5 rounded-md mb-1 transition-colors ${
+            className={`w-full rounded-md mb-1 transition-colors ${
               selectedId === profile.id
                 ? "bg-surface-3 border border-border-hover"
                 : "hover:bg-surface-2 border border-transparent"
             }`}
           >
-            <div className="flex items-center gap-2">
-              <StatusIndicator status={profile.status} />
-              <span className="text-sm font-medium truncate">{profile.name}</span>
-            </div>
-            <div className="flex items-center gap-2 mt-1 ml-4">
-              <span className="text-xs text-gray-500 capitalize">{profile.platform}</span>
-              {profile.proxy && (
-                <>
-                  <span className="text-xs text-gray-600">·</span>
-                  <span className="text-xs text-gray-500">Proxy</span>
-                </>
-              )}
-            </div>
-            {profile.tags.length > 0 && (
-              <div className="flex gap-1 mt-1.5 ml-4 flex-wrap">
-                {profile.tags.map((t) => (
-                  <span
-                    key={t.tag}
-                    className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-4 text-gray-400"
-                    style={t.color ? { backgroundColor: `${t.color}20`, color: t.color } : undefined}
-                  >
-                    {t.tag}
-                  </span>
-                ))}
+            <button
+              type="button"
+              onClick={() => onSelect(profile.id)}
+              className="w-full px-3 pt-2.5 text-left"
+              aria-label={`Open ${profile.name}`}
+            >
+              <div className="flex items-center gap-2">
+                <StatusIndicator status={profile.status} />
+                <span className="text-sm font-medium truncate">{profile.name}</span>
               </div>
-            )}
-          </button>
+              <div className="flex items-center gap-2 mt-1 ml-4">
+                <span className="text-xs text-gray-500 capitalize">{profile.platform}</span>
+                {profile.proxy && (
+                  <>
+                    <span className="text-xs text-gray-600">·</span>
+                    <span className="text-xs text-gray-500">Proxy</span>
+                  </>
+                )}
+              </div>
+              {profile.tags.length > 0 && (
+                <div className="flex gap-1 mt-1.5 ml-4 flex-wrap">
+                  {profile.tags.map((t) => (
+                    <span
+                      key={t.tag}
+                      className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-4 text-gray-400"
+                      style={t.color ? { backgroundColor: `${t.color}20`, color: t.color } : undefined}
+                    >
+                      {t.tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </button>
+            <div className="ml-7 px-2 pb-2 pt-1">
+              <ProfileIdCopy profileId={profile.id} />
+            </div>
+          </div>
         ))}
       </div>
 

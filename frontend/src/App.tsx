@@ -5,6 +5,7 @@ import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
 import { ProfileForm } from "./components/ProfileForm";
 import { ProfileViewer } from "./components/ProfileViewer";
+import { ProfileIdCopy } from "./components/ProfileIdCopy";
 import { LaunchButton } from "./components/LaunchButton";
 import { StatusIndicator } from "./components/StatusIndicator";
 import { LoginPage } from "./components/LoginPage";
@@ -203,10 +204,15 @@ function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
     return (
       <div className="h-screen flex flex-col bg-surface-0">
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface-1">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Bot className="h-4 w-4 text-accent" />
             <span className="text-sm font-semibold">AgentOS Browser</span>
-            {assigned && <span className="text-xs text-gray-500">{assigned.name}</span>}
+            {assigned && (
+              <>
+                <span className="max-w-48 truncate text-xs text-gray-500">{assigned.name}</span>
+                <ProfileIdCopy profileId={assigned.id} locale="zh" />
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {assigned && !assigned.is_archived && !assigned.headless && assigned.status === "running" && (
