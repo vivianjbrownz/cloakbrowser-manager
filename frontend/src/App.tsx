@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
-import { Bot, Lock, Microscope, PanelLeftClose, PanelLeft, Table2 } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Bot, Lock, Microscope, MonitorUp, PanelLeftClose, PanelLeft, Table2 } from "lucide-react";
 import { useProfiles } from "./hooks/useProfiles";
 import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
@@ -98,11 +98,75 @@ interface AppContentProps {
   onLogout: () => void;
 }
 
+interface BrowserUiPromptProps {
+  locale: "en" | "zh";
+  profileStatus: "running" | "stopped";
+  busy: boolean;
+  error: string | null;
+  onStart: () => void;
+}
+
+function BrowserUiPrompt({ locale, profileStatus, busy, error, onStart }: BrowserUiPromptProps) {
+  const isRunning = profileStatus === "running";
+  const copy = locale === "zh"
+    ? {
+        title: isRunning ? "浏览器正在无头模式运行" : "浏览器 UI 当前已关闭",
+        description: isRunning
+          ? "Agent 可以继续操作，但无头浏览器不会向远程画布输出画面。打开 UI 会保留资料并将浏览器重启为可视模式。"
+          : "打开 UI 后将以可视模式启动浏览器，并恢复此 Profile 中保存的资料与会话。",
+        action: "打开浏览器 UI",
+        pending: "正在打开…",
+        retry: "请重试；Profile 资料没有被删除。",
+      }
+    : {
+        title: isRunning ? "This profile is running headless" : "Browser UI is closed",
+        description: isRunning
+          ? "The Agent can continue working, but a headless browser has no desktop picture to display. Open the UI to preserve the profile and restart it in visible mode."
+          : "Open the browser in visible mode and restore the profile's saved data and session.",
+        action: "Open browser UI",
+        pending: "Opening browser UI…",
+        retry: "Try again. No profile data was deleted.",
+      };
+
+  return (
+    <div className="flex h-full min-h-80 items-center justify-center bg-surface-0 px-6 py-12">
+      <div className="flex max-w-xl flex-col items-center text-center">
+        <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 text-accent">
+          <MonitorUp className="h-6 w-6" aria-hidden="true" />
+        </div>
+        <h2 className="text-xl font-semibold tracking-tight text-gray-100">{copy.title}</h2>
+        <p className="mt-3 max-w-[62ch] text-sm leading-6 text-gray-400">{copy.description}</p>
+        {error && (
+          <div
+            role="alert"
+            className="mt-5 w-full rounded-xl bg-red-600/10 px-4 py-3 text-left text-sm text-red-400"
+          >
+            <p className="font-medium break-words">{error}</p>
+            <p className="mt-1 text-xs text-red-400/80">{copy.retry}</p>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={onStart}
+          disabled={busy}
+          aria-busy={busy}
+          className="btn-primary mt-6 min-w-40 disabled:cursor-wait disabled:opacity-60"
+        >
+          {busy ? copy.pending : copy.action}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
   const { profiles, loading, error, refresh, create, update, remove, archive, restore, launch, stop } = useProfiles();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("inventory");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [uiTransitioningId, setUiTransitioningId] = useState<string | null>(null);
+  const [uiTransitionError, setUiTransitionError] = useState<{ profileId: string; message: string } | null>(null);
+  const uiTransitioningRef = useRef<string | null>(null);
 
   const selected = profiles.find((p) => p.id === selectedId) ?? null;
 
@@ -182,8 +246,22 @@ function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
   }, []);
 
   const handleStartUi = useCallback(async (profileId: string) => {
-    await api.startProfileUi(profileId);
-    await refresh();
+    if (uiTransitioningRef.current) return;
+    uiTransitioningRef.current = profileId;
+    setUiTransitioningId(profileId);
+    setUiTransitionError(null);
+    try {
+      await api.startProfileUi(profileId);
+      await refresh();
+    } catch (err) {
+      setUiTransitionError({
+        profileId,
+        message: err instanceof Error ? err.message : "Unable to open the browser UI",
+      });
+    } finally {
+      uiTransitioningRef.current = null;
+      setUiTransitioningId(null);
+    }
   }, [refresh]);
 
   const handleStopUi = useCallback(async (profileId: string) => {
@@ -232,14 +310,13 @@ function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
             <div className="h-full flex items-center justify-center text-sm text-gray-500">No browser profile is assigned.</div>
           )}
           {assigned && (assigned.status === "stopped" || assigned.headless) && (
-            <div className="h-full flex flex-col gap-4 items-center justify-center">
-              <p className="text-sm text-gray-400">
-                {assigned.status === "running" ? "Agent 正在无头模式操作；打开 UI 会保留资料并切换到可视模式。" : "浏览器当前未运行；打开 UI 后才启用图形界面。"}
-              </p>
-              <button onClick={() => handleStartUi(assigned.id)} className="rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90">
-                打开浏览器 UI
-              </button>
-            </div>
+            <BrowserUiPrompt
+              locale="zh"
+              profileStatus={assigned.status}
+              busy={uiTransitioningId === assigned.id}
+              error={uiTransitionError?.profileId === assigned.id ? uiTransitionError.message : null}
+              onStart={() => handleStartUi(assigned.id)}
+            />
           )}
           {assigned && assigned.status === "running" && !assigned.headless && (
             <ProfileViewer
@@ -413,7 +490,17 @@ function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
             />
           )}
 
-          {view === "view" && selected && selected.status === "running" && (
+          {view === "view" && selected && selected.status === "running" && selected.headless && (
+            <BrowserUiPrompt
+              locale="en"
+              profileStatus={selected.status}
+              busy={uiTransitioningId === selected.id}
+              error={uiTransitionError?.profileId === selected.id ? uiTransitionError.message : null}
+              onStart={() => handleStartUi(selected.id)}
+            />
+          )}
+
+          {view === "view" && selected && selected.status === "running" && !selected.headless && (
             <ProfileViewer
               key={selected.id}
               profileId={selected.id}

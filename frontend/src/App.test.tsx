@@ -40,6 +40,7 @@ const assignedProfile: Profile = {
 
 const mocks = vi.hoisted(() => ({
   setOnUnauthorized: vi.fn(),
+  refresh: vi.fn(),
   api: {
     authStatus: vi.fn(),
     logout: vi.fn(),
@@ -66,11 +67,20 @@ beforeEach(() => {
     authenticated: true,
     role: "scoped",
   });
+  mocks.api.startProfileUi.mockReset().mockResolvedValue({
+    profile_id: fullId,
+    status: "running",
+    vnc_ws_port: 6100,
+    display: ":100",
+    cdp_url: `/api/profiles/${fullId}/cdp`,
+  });
+  mocks.api.stopProfileUi.mockReset();
+  mocks.refresh.mockReset().mockResolvedValue(undefined);
   mocks.useProfiles.mockReset().mockReturnValue({
     profiles: [assignedProfile],
     loading: false,
     error: null,
-    refresh: vi.fn(),
+    refresh: mocks.refresh,
     create: vi.fn(),
     update: vi.fn(),
     remove: vi.fn(),
@@ -98,5 +108,69 @@ describe("scoped employee profile ID", () => {
     fireEvent.click(screen.getByTitle("复制完整 Profile ID"));
 
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(fullId));
+  });
+
+  it("explains a running headless profile instead of mounting a black VNC viewer", async () => {
+    mocks.useProfiles.mockReturnValue({
+      ...mocks.useProfiles(),
+      profiles: [{ ...assignedProfile, status: "running", headless: true }],
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("浏览器正在无头模式运行")).toBeTruthy();
+    expect(screen.queryByTestId("vnc-canvas-container")).toBeNull();
+  });
+
+  it("opens the browser UI once and refreshes the profile state", async () => {
+    mocks.useProfiles.mockReturnValue({
+      ...mocks.useProfiles(),
+      profiles: [{ ...assignedProfile, status: "running", headless: true }],
+    });
+
+    render(<App />);
+    const button = await screen.findByRole("button", { name: "打开浏览器 UI" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await waitFor(() => expect(mocks.api.startProfileUi).toHaveBeenCalledTimes(1));
+    expect(mocks.api.startProfileUi).toHaveBeenCalledWith(fullId);
+    await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps a retry action visible when opening the browser UI fails", async () => {
+    mocks.api.startProfileUi.mockRejectedValueOnce(new Error("Browser restart failed"));
+    mocks.useProfiles.mockReturnValue({
+      ...mocks.useProfiles(),
+      profiles: [{ ...assignedProfile, status: "running", headless: true }],
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "打开浏览器 UI" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Browser restart failed");
+    expect((screen.getByRole("button", { name: "打开浏览器 UI" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("administrator headless profile handoff", () => {
+  it("shows the explicit UI switch instead of the VNC viewer", async () => {
+    mocks.api.authStatus.mockResolvedValue({
+      auth_required: true,
+      authenticated: true,
+      role: "admin",
+    });
+    mocks.useProfiles.mockReturnValue({
+      ...mocks.useProfiles(),
+      profiles: [{ ...assignedProfile, status: "running", headless: true }],
+    });
+
+    render(<App />);
+    const openButtons = await screen.findAllByRole("button", { name: "Open Employee Browser" });
+    fireEvent.click(openButtons[0]);
+
+    expect(await screen.findByText("This profile is running headless")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open browser UI" })).toBeTruthy();
+    expect(screen.queryByTestId("vnc-canvas-container")).toBeNull();
   });
 });
