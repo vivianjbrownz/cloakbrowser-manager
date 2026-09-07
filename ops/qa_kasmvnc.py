@@ -125,6 +125,7 @@ async def run(args):
                                         ws.on("close", lambda: wire.update(closed=wire["closed"]+1))
                                     page.on("websocket", socket)
                                     await page.goto(args.base_url)
+                                    await page.get_by_placeholder("Search profiles...").fill(profile["name"])
                                     await page.get_by_role("button", name=f"Open {profile['name']}", exact=True).first.click()
                                     try:
                                         await page.get_by_text("Connected", exact=True).wait_for(timeout=30000)
@@ -217,6 +218,14 @@ async def run(args):
                                             "focus": await page.evaluate("document.activeElement?.outerHTML"), "errors": errors}), flush=True)
                                         raise
                                     functional["paste_once_without_sync"] = True
+                                    await page.evaluate("navigator.clipboard.writeText('')")
+                                    await target.locator("#text").fill("远端复制测试")
+                                    await page.keyboard.press("Control+a")
+                                    await page.keyboard.press("Control+c")
+                                    await page.get_by_title("Enable continuous clipboard sync", exact=True).click()
+                                    await page.wait_for_function("async () => (await navigator.clipboard.readText()) === '远端复制测试'", timeout=8000)
+                                    await page.get_by_title("Disable continuous clipboard sync", exact=True).click()
+                                    functional["copy_remote_to_host"] = True
                                     for label in ["Balanced", "Sharp", "Fast"]:
                                         await page.get_by_role("button", name=label, exact=True).click()
                                     await page.get_by_title("Fullscreen", exact=True).click()
@@ -233,6 +242,22 @@ async def run(args):
                                     wire["closed"] -= 1  # Deliberate disconnection, not a stability failure.
                                     assert await target.evaluate(FINGERPRINT) == before[0]
                                     functional["reconnect_without_browser_restart"] = True
+                                    await page.screenshot(path=str(Path(args.output).parent / "viewer-desktop.png"))
+                                    await page.set_viewport_size({"width": 390, "height": 844})
+                                    sidebar_toggle = page.get_by_title("Hide sidebar", exact=True)
+                                    if await sidebar_toggle.count():
+                                        await sidebar_toggle.click()
+                                    await page.wait_for_function("""() => {
+                                      const parent=document.querySelector('[data-testid="vnc-canvas-container"]');
+                                      const canvas=parent.querySelector('canvas');
+                                      const box=canvas.getBoundingClientRect(), available=parent.getBoundingClientRect();
+                                      const scale=Math.min(available.width/canvas.width,available.height/canvas.height);
+                                      return Math.abs(box.width-canvas.width*scale)<2 && Math.abs(box.height-canvas.height*scale)<2;
+                                    }""", timeout=5000)
+                                    assert await target.evaluate(FINGERPRINT) == before[0]
+                                    functional["mobile_container_resize_without_remote_resize"] = True
+                                    await page.screenshot(path=str(Path(args.output).parent / "viewer-mobile.png"))
+                                    await page.set_viewport_size({"width": 1500, "height": 1100})
                                 if mode == "kasm" and args.soak_seconds and concurrency == max(args.concurrency):
                                     deadline = time.monotonic()+args.soak_seconds
                                     while time.monotonic() < deadline:

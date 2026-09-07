@@ -62,6 +62,6 @@
     "vendor/promise.js": "e97d6589b35c24c3f8593e728f5b7ff26aff3da4b731fc777d9b18b1ee8724e6"
   },
   "patched_files": {
-    "core/rfb.js": "d0d67150b01fe80a415a5e3186c3778f2e1d48d80e46eeb9455c5888e993c68b"
+    "core/rfb.js": "04b44c9f2fd996331ff78210a7c6b251d235cec3f65d7218f999132e16f5d7c8"
   }
 }

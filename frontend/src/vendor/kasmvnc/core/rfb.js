@@ -1232,8 +1232,10 @@ export default class RFB extends EventTargetMixin {
         this._cursor.attach(this._canvas);
         this._refreshCursor();
 
-        // Monitor size changes of the screen
-        // FIXME: Use ResizeObserver, or hidden overflow
+        // The Manager can resize this container without a window resize (for
+        // example, collapsing its sidebar). Keep local scaling in sync.
+        this._resizeObserver = new ResizeObserver(this._eventHandlers.windowResize);
+        this._resizeObserver.observe(this._screen);
         window.addEventListener('resize', this._eventHandlers.windowResize);
 
         // Always grab focus on some kind of click event
@@ -1421,6 +1423,7 @@ export default class RFB extends EventTargetMixin {
         this._canvas.removeEventListener("touchstart", this._eventHandlers.focusCanvas);
         this._canvas.removeEventListener("focus", this._eventHandlers.handleFocusChange);
         window.removeEventListener('resize', this._eventHandlers.windowResize);
+        this._resizeObserver?.disconnect();
         window.removeEventListener('focus', this._eventHandlers.handleFocusChange);
         window.removeEventListener('blur', this._eventHandlers.handleFocusChange);
         window.removeEventListener('mouseover', this._eventHandlers.handleMouseOut);

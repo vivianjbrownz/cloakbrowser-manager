@@ -19,6 +19,8 @@ Local changes in `core/rfb.js`:
 - Release BroadcastChannel, RTC and missing window listeners on disconnect;
   tolerate broadcasting after cleanup.
 - Resolve the iOS keyboard input through this instance rather than a global ID.
+- Observe container size changes so sidebar/fullscreen layout changes rescale
+  the local canvas; disconnect the observer with the viewer.
 
 `core/rfb.d.ts` describes the integration surface; it is not upstream code.
 Rendering, pointer, key, IME, encoding and binary RFB implementations are from
