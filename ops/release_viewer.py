@@ -101,6 +101,11 @@ def validate_acceptance(path):
             raise ValueError("Incomplete concurrent viewer measurements")
         if not new.get("fingerprint_unchanged") or new["wire"]["closed"]:
             raise ValueError("Fingerprint or connection stability check failed")
+        for check in ("chinese_composition", "paste_once_without_sync", "copy_remote_to_host",
+                      "quality_fullscreen_session_preserved", "reconnect_without_browser_restart",
+                      "mobile_container_resize_without_remote_resize"):
+            if new.get("functional", {}).get(check) is not True:
+                raise ValueError(f"KasmVNC functional gate not met: concurrency={concurrency}, check={check}")
         for baseline, native in zip(old["measurements"], new["measurements"], strict=True):
             for action in ("click", "typing", "scroll"):
                 if min(baseline[action]["samples"], native[action]["samples"]) < 50:

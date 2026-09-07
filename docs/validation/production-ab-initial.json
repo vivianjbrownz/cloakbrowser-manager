@@ -1,0 +1,260 @@
+{
+  "base_url": "http://127.0.0.1:18982",
+  "timestamp_utc": "2026-09-07T16:15:48Z",
+  "cases": [
+    {
+      "concurrency": 1,
+      "mode": "novnc",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 172.6,
+            "p95_ms": 425.5,
+            "max_ms": 538.5
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 163.7,
+            "p95_ms": 394.6,
+            "max_ms": 477.7
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 194.7,
+            "p95_ms": 356.9,
+            "max_ms": 502.4
+          },
+          "first_scroll_received": false
+        }
+      ],
+      "wire": {
+        "sent": 5374,
+        "received": 183579,
+        "closed": 0
+      },
+      "functional": {},
+      "fingerprint_unchanged": true
+    },
+    {
+      "concurrency": 1,
+      "mode": "kasm",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 228.8,
+            "p95_ms": 449.1,
+            "max_ms": 717.8
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 159.4,
+            "p95_ms": 396.8,
+            "max_ms": 625.4
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 205.6,
+            "p95_ms": 514.3,
+            "max_ms": 600.2
+          },
+          "first_scroll_received": true
+        }
+      ],
+      "wire": {
+        "sent": 10418,
+        "received": 157934,
+        "closed": 0
+      },
+      "functional": {
+        "chinese_composition": true,
+        "paste_once_without_sync": true,
+        "copy_remote_to_host": true,
+        "quality_fullscreen_session_preserved": true,
+        "reconnect_without_browser_restart": true
+      },
+      "fingerprint_unchanged": true
+    },
+    {
+      "concurrency": 3,
+      "mode": "novnc",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 245.9,
+            "p95_ms": 443,
+            "max_ms": 592.3
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 177.0,
+            "p95_ms": 376.9,
+            "max_ms": 464.1
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 259.4,
+            "p95_ms": 554.9,
+            "max_ms": 1161.1
+          },
+          "first_scroll_received": false
+        },
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 253.0,
+            "p95_ms": 511.4,
+            "max_ms": 696.2
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 165.9,
+            "p95_ms": 383.6,
+            "max_ms": 450.2
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 260.3,
+            "p95_ms": 545.2,
+            "max_ms": 944.1
+          },
+          "first_scroll_received": false
+        },
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 244.7,
+            "p95_ms": 537.2,
+            "max_ms": 654.3
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 180.1,
+            "p95_ms": 350.4,
+            "max_ms": 376.2
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 231.6,
+            "p95_ms": 516.4,
+            "max_ms": 994.4
+          },
+          "first_scroll_received": false
+        }
+      ],
+      "wire": {
+        "sent": 16212,
+        "received": 561832,
+        "closed": 0
+      },
+      "functional": {},
+      "fingerprint_unchanged": true
+    },
+    {
+      "concurrency": 3,
+      "mode": "kasm",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 302.3,
+            "p95_ms": 572.4,
+            "max_ms": 914.1
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 180.3,
+            "p95_ms": 413.8,
+            "max_ms": 526.2
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 179.9,
+            "p95_ms": 399.6,
+            "max_ms": 654.2
+          },
+          "first_scroll_received": true
+        },
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 285.6,
+            "p95_ms": 688.6,
+            "max_ms": 867.4
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 185.0,
+            "p95_ms": 427.6,
+            "max_ms": 583
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 183.1,
+            "p95_ms": 500.8,
+            "max_ms": 634.8
+          },
+          "first_scroll_received": true
+        },
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 50,
+            "median_ms": 276.8,
+            "p95_ms": 689.9,
+            "max_ms": 1015.1
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 177.4,
+            "p95_ms": 376.9,
+            "max_ms": 410.7
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 178.7,
+            "p95_ms": 462.9,
+            "max_ms": 570.5
+          },
+          "first_scroll_received": true
+        }
+      ],
+      "wire": {
+        "sent": 29636,
+        "received": 756888,
+        "closed": 0
+      },
+      "functional": {
+        "chinese_composition": true,
+        "paste_once_without_sync": true,
+        "copy_remote_to_host": true,
+        "quality_fullscreen_session_preserved": true,
+        "reconnect_without_browser_restart": true
+      },
+      "fingerprint_unchanged": true
+    }
+  ],
+  "errors": [],
+  "soak_seconds": 0,
+  "note": "Automation host measurements; not a substitute for the user's network/device.",
+  "server": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 13
+  },
+  "application_revision": "d54886f89cf89c98b10ad87bf176fdd72caf37c3",
+  "limitations": [
+    "Authenticated SSH tunnel to production; Cloudflare and the user network/device were not exercised.",
+    "Wire totals include handshakes and extra native functional checks; they are not a normalized bandwidth comparison.",
+    "Modes used the same browser instances in novnc then kasm order; first-wheel initialization may carry over."
+  ]
+}

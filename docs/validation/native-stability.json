@@ -1,0 +1,113 @@
+{
+  "base_url": "http://127.0.0.1:18983",
+  "timestamp_utc": "2026-09-07T16:27:32Z",
+  "cases": [
+    {
+      "concurrency": 3,
+      "mode": "kasm",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 3,
+            "median_ms": 182,
+            "p95_ms": 326.6,
+            "max_ms": 326.6
+          },
+          "typing": {
+            "samples": 3,
+            "median_ms": 230.6,
+            "p95_ms": 279.2,
+            "max_ms": 279.2
+          },
+          "scroll": {
+            "samples": 3,
+            "median_ms": 233.6,
+            "p95_ms": 370.1,
+            "max_ms": 370.1
+          },
+          "first_scroll_received": false
+        },
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 3,
+            "median_ms": 179.8,
+            "p95_ms": 588.1,
+            "max_ms": 588.1
+          },
+          "typing": {
+            "samples": 3,
+            "median_ms": 260.8,
+            "p95_ms": 359.3,
+            "max_ms": 359.3
+          },
+          "scroll": {
+            "samples": 3,
+            "median_ms": 360.6,
+            "p95_ms": 476.3,
+            "max_ms": 476.3
+          },
+          "first_scroll_received": false
+        },
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 3,
+            "median_ms": 198.6,
+            "p95_ms": 662.8,
+            "max_ms": 662.8
+          },
+          "typing": {
+            "samples": 3,
+            "median_ms": 213,
+            "p95_ms": 421.1,
+            "max_ms": 421.1
+          },
+          "scroll": {
+            "samples": 3,
+            "median_ms": 519.2,
+            "p95_ms": 548.2,
+            "max_ms": 548.2
+          },
+          "first_scroll_received": false
+        }
+      ],
+      "wire": {
+        "sent": 130098,
+        "received": 1603602,
+        "closed": 0
+      },
+      "functional": {
+        "chinese_composition": true,
+        "paste_once_without_sync": true,
+        "copy_remote_to_host": true,
+        "quality_fullscreen_session_preserved": true,
+        "reconnect_without_browser_restart": true,
+        "mobile_container_resize_without_remote_resize": true
+      },
+      "fingerprint_unchanged": true
+    }
+  ],
+  "errors": [],
+  "soak_seconds": 1800,
+  "note": "Automation host measurements; not a substitute for the user's network/device.",
+  "server": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 0
+  },
+  "application_revision": "5f2cd4353136e7286ff3fd417594865c6fc74c9f",
+  "soak_completed_utc": "2026-09-07T16:58:06Z",
+  "harness_exited_successfully_utc": "2026-09-07T16:58:09Z",
+  "cleanup_status": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 0
+  },
+  "limitations": [
+    "Local isolated Manager and automation browser; not Cloudflare ingress or the user device.",
+    "Three samples per action here are a functional warmup, not a performance acceptance data set; use production-ab.json for 50-sample measurements.",
+    "The 1800-second phase checks connections every 30 seconds and sends keyboard events; it is not a sustained heavy-page workload."
+  ]
+}

@@ -59,8 +59,10 @@ must be private (mode 0600); do not put tokens in shell arguments or reports.
 The measurement starts at the local input event and ends when the decoded canvas
 changes, excluding the target site's network load. First-wheel initialization
 is recorded separately; regular samples follow two initialization wheel events.
-Chrome's XInput scroll initialization can consume the first native scroll event.
-Do not present warmed-up numbers as proof of first-interaction correctness.
+The first wheel event has sometimes produced no feedback on a fresh browser
+with either client. XInput initialization is a hypothesis, not an established
+root cause; mode order can affect this result. Do not present warmed-up numbers
+as proof of first-interaction correctness.
 
 Record the actual client's network/device, round-trip latency, CPU, memory and
 frame rate alongside the JSON report. Automation on a server is not a substitute
@@ -118,3 +120,6 @@ Rollback reuses current persistent data; it does not restore an older database,
 cookies or Profile directory. Retired containers have restart disabled so a host
 reboot cannot accidentally start two Managers against the same data volume.
 No Open WebUI, Hermes, Cloudflare ingress or other service restart is required.
+
+Deployment evidence is recorded in [kasmvnc-validation.md](kasmvnc-validation.md).
+Outstanding acceptance work is tracked in [kasmvnc-follow-up.md](kasmvnc-follow-up.md).
