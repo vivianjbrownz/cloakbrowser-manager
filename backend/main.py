@@ -74,6 +74,9 @@ logging.getLogger("asyncio").setLevel(logging.WARNING)
 # If not set, all routes are open (local dev). If set, all /api/* routes
 # (except /api/auth/* and /api/status) require Bearer token or cookie.
 AUTH_TOKEN: str | None = os.environ.get("AUTH_TOKEN") or None
+VIEWER_DEFAULT = os.environ.get("CLOAKBROWSER_VIEWER_DEFAULT", "novnc")
+if VIEWER_DEFAULT not in {"novnc", "kasm"}:
+    raise ValueError("CLOAKBROWSER_VIEWER_DEFAULT must be novnc or kasm")
 AGENTOS_SCOPED_AUTH_SECRET: str | None = os.environ.get("AGENTOS_SCOPED_AUTH_SECRET") or None
 AGENTOS_SCOPED_USER_MAP_FILE: str | None = os.environ.get("AGENTOS_SCOPED_USER_MAP_FILE") or None
 try:
@@ -144,7 +147,7 @@ def _scoped_api_allowed(scope: Scope, profile_id: str) -> bool:
         (rf"^/api/profiles/{escaped}/clipboard$", "POST"),
     }
     if scope["type"] == "websocket":
-        return bool(re.fullmatch(rf"/api/profiles/{escaped}/vnc", path))
+        return bool(re.fullmatch(rf"/api/profiles/{escaped}/(?:vnc|vnc-native)", path))
     return any(candidate_method == method and re.fullmatch(pattern, path) for pattern, candidate_method in allowed)
 
 
@@ -697,11 +700,17 @@ async def auth_status(request: starlette.requests.Request):
             "role": "scoped",
             "email": email,
             "assigned_profile_id": profile_id,
+            "viewer_default": VIEWER_DEFAULT,
         }
     authenticated = False
     if AUTH_TOKEN:
         authenticated = _check_auth(request.scope)
-    return {"auth_required": AUTH_TOKEN is not None, "authenticated": authenticated, "role": "admin"}
+    return {
+        "auth_required": AUTH_TOKEN is not None,
+        "authenticated": authenticated,
+        "role": "admin",
+        "viewer_default": VIEWER_DEFAULT,
+    }
 
 
 @app.post("/api/auth/login")
@@ -1447,6 +1456,12 @@ async def set_clipboard(profile_id: str, body: ClipboardRequest):
         proc.stdin.write(body.text.encode())  # type: ignore[union-attr]
         await proc.stdin.drain()  # type: ignore[union-attr]
         proc.stdin.close()  # type: ignore[union-attr]
+        # In default (silent) mode xclip forks only after taking ownership of
+        # the X selection. Wait for its launcher to exit before acknowledging:
+        # otherwise a fast native client can send Ctrl+V before the new text is
+        # available and paste the previous selection or nothing at all.
+        if await asyncio.wait_for(proc.wait(), timeout=2) != 0:
+            raise HTTPException(status_code=502, detail="Could not update remote clipboard")
     except Exception:
         if proc.returncode is None:
             proc.kill()
@@ -1514,6 +1529,78 @@ async def get_clipboard(profile_id: str):
 
 
 # ── VNC WebSocket Proxy ──────────────────────────────────────────────────────
+
+
+@app.websocket("/api/profiles/{profile_id}/vnc-native")
+async def vnc_native_proxy(websocket: WebSocket, profile_id: str):
+    """Authenticated byte-for-byte KasmVNC transport; never translate RFB here."""
+    import websockets
+
+    if not await _check_websocket_origin(websocket):
+        return
+    running = browser_mgr.running.get(profile_id)
+    if not running:
+        await websocket.close(code=4004, reason="Profile not running")
+        return
+
+    requested = websocket.scope.get("subprotocols", [])
+    await websocket.accept(subprotocol="binary" if "binary" in requested else None)
+    _profile_connection_opened(profile_id)
+    tasks: list[asyncio.Task] = []
+    close_code = 1000
+    try:
+        async with websockets.connect(
+            f"ws://127.0.0.1:{running.ws_port}/websockify",
+            subprotocols=["binary"],
+            origin=f"http://127.0.0.1:{running.ws_port}",
+            max_size=None,
+            max_queue=4,  # Bound buffered frames; await each send for backpressure.
+            ping_interval=None,
+            ping_timeout=None,
+            compression=None,
+            open_timeout=10,
+            close_timeout=2,
+        ) as upstream:
+            async def client_to_vnc():
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        return
+                    data = message.get("bytes")
+                    if data is None:
+                        await websocket.close(code=1003, reason="Binary frames required")
+                        return
+                    await upstream.send(data)
+
+            async def vnc_to_client():
+                async for data in upstream:
+                    if not isinstance(data, bytes):
+                        raise ValueError("KasmVNC sent a non-binary frame")
+                    await websocket.send_bytes(data)
+
+            tasks = [
+                asyncio.create_task(client_to_vnc(), name="kasm-client-to-vnc"),
+                asyncio.create_task(vnc_to_client(), name="kasm-vnc-to-client"),
+            ]
+            try:
+                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    task.result()
+            finally:
+                # Finish both pumps before leaving the upstream context, including
+                # when the ASGI request itself is cancelled during shutdown.
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        close_code = 1011
+        logger.warning("Native VNC proxy failed for %s: %s", profile_id, type(exc).__name__)
+    finally:
+        _profile_connection_closed(profile_id)
+        with suppress(RuntimeError, WebSocketDisconnect):
+            await websocket.close(code=close_code)
 
 
 @app.websocket("/api/profiles/{profile_id}/vnc")

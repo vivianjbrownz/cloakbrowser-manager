@@ -1,3 +1,5 @@
-
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads
+
+# Keep immutable upstream formatting and exclude it from language statistics.
+frontend/src/vendor/kasmvnc/** -whitespace linguist-vendored=true

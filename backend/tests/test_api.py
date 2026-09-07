@@ -468,6 +468,35 @@ def test_set_clipboard_success(app_client: TestClient):
 
 
 @pytest.mark.asyncio
+async def test_clipboard_ack_waits_until_selection_is_ready(monkeypatch):
+    from backend.models import ClipboardRequest
+
+    ready = asyncio.Event()
+    proc = MagicMock()
+    proc.returncode = None
+    proc.stdin.drain = AsyncMock()
+
+    async def wait_ready():
+        await ready.wait()
+        proc.returncode = 0
+        return 0
+
+    proc.wait = wait_ready
+    monkeypatch.setattr(main.browser_mgr, "running", {"clipboard-qa": MagicMock(display=100)})
+    monkeypatch.setattr(main, "_xclip_procs", {})
+    monkeypatch.setattr(main, "_xclip_wait_tasks", {})
+    monkeypatch.setattr(main, "_profile_last_activity", {})
+    monkeypatch.setattr(main.asyncio, "create_subprocess_exec", AsyncMock(return_value=proc))
+    task = asyncio.create_task(main.set_clipboard("clipboard-qa", ClipboardRequest(text="ready text")))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not task.done(), "HTTP success must not race ahead of X clipboard ownership"
+    ready.set()
+    assert await task == {"ok": True}
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
 async def test_stop_xclip_for_display_terminates_and_waits():
     proc = MagicMock()
     proc.returncode = None

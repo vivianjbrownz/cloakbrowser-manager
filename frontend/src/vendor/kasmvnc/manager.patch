@@ -1,0 +1,77 @@
+--- a/core/rfb.js
++++ b/core/rfb.js
+@@ -119,7 +119,8 @@
+         this._supportsContinuousUpdates = false;
+         this._enabledContinuousUpdates = false;
+         this._supportsSetDesktopSize = false;
+-        this._connectionID = window.location.href.split('?')[0].match(/^(.+)(\/)/)[0];
++        this._connectionID = options.connectionID || window.location.href.split('?')[0].match(/^(.+)(\/)/)[0];
++        this._allowRemoteResize = options.allowRemoteResize !== false;
+         this._screenFlags = 0;
+         this._qemuExtKeyEventSupported = false;
+ 
+@@ -141,7 +142,7 @@
+         this._forcedResolutionY = null;
+         this._clipboardBinary = true;
+         this._resendClipboardNextUserDrivenEvent = true;
+-        this._useUdp = true;
++        this._useUdp = options.enableWebRTC !== false;
+         this._hiDpi = 'hiDpi' in options ? !!options.hiDpi : false;
+         this._enableQOI = false;
+         this._videoQuality =  2;
+@@ -1285,7 +1286,7 @@
+         this._resendClipboardNextUserDrivenEvent = true;
+ 
+         // WebRTC UDP datachannel inits
+-        if (typeof RTCPeerConnection !== 'undefined' && this._isPrimaryDisplay) {
++        if (typeof RTCPeerConnection !== 'undefined' && this._isPrimaryDisplay && this._useUdp) {
+             this._udpBuffer = new Map();
+ 
+             this._udpPeer = new RTCPeerConnection({
+@@ -1421,6 +1422,9 @@
+         this._canvas.removeEventListener("focus", this._eventHandlers.handleFocusChange);
+         window.removeEventListener('resize', this._eventHandlers.windowResize);
+         window.removeEventListener('focus', this._eventHandlers.handleFocusChange);
++        window.removeEventListener('blur', this._eventHandlers.handleFocusChange);
++        window.removeEventListener('mouseover', this._eventHandlers.handleMouseOut);
++        this._canvas.removeEventListener('touchend', this._eventHandlers.updateHiddenKeyboard);
+         document.removeEventListener('visibilitychange', this._eventHandlers.handleVisibilityChange);
+ 
+         this._keyboard.ungrab();
+@@ -1447,6 +1451,10 @@
+             }
+         }
+         this._display.dispose();
++        this._controlChannel?.close();
++        this._controlChannel = null;
++        this._udpChannel?.close();
++        this._udpPeer?.close();
+         clearTimeout(this._resizeTimeout);
+         clearTimeout(this._mouseMoveTimer);
+         window.localStorage.removeItem('lastWindow')
+@@ -1456,7 +1464,7 @@
+     _updateHiddenKeyboard(event) {
+         // On iOS 15 the navigation bar is at the bottom so we need to account for it
+         const y = Math.max(0, event.pageY - 50);
+-        document.querySelector("#noVNC_keyboardinput").style.top = `${y}px`;
++        this._keyboard._touchInput.style.top = `${y}px`;
+     }
+ 
+     _handleFocusChange(event) {
+@@ -1589,6 +1597,7 @@
+     _requestRemoteResize() {
+         clearTimeout(this._resizeTimeout);
+         this._resizeTimeout = null;
++        if (!this._allowRemoteResize) return;
+ 
+         if (this._isPrimaryDisplay) {
+             if (
+@@ -1792,7 +1801,7 @@
+             screenIndex: this._display.screenIndex,
+             mouseLastScreenIndex: this._mouseLastScreenIndex,
+         }
+-        this._controlChannel.postMessage(message);
++        this._controlChannel?.postMessage(message);
+     }
+ 
+     _handleControlMessage(event) {

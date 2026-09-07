@@ -6,7 +6,7 @@ ARG RUNTIME_BASE_IMAGE=ghcr.io/vivianjbrownz/cloakbrowser-manager@sha256:bf57816
 FROM node:20-slim AS frontend-builder
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 

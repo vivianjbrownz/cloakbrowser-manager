@@ -1,0 +1,227 @@
+{
+  "base_url": "http://127.0.0.1:18981",
+  "timestamp_utc": "2026-09-07T15:46:06Z",
+  "cases": [
+    {
+      "concurrency": 1,
+      "mode": "novnc",
+      "measurements": [
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 173.7,
+            "p95_ms": 365.6,
+            "max_ms": 409.6
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 121.7,
+            "p95_ms": 171.5,
+            "max_ms": 255.1
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 198.6,
+            "p95_ms": 390.2,
+            "max_ms": 523.4
+          }
+        }
+      ],
+      "wire": {
+        "sent": 5964,
+        "received": 285579,
+        "closed": 0
+      },
+      "fingerprint_unchanged": true
+    },
+    {
+      "concurrency": 1,
+      "mode": "kasm",
+      "measurements": [
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 131.5,
+            "p95_ms": 277.5,
+            "max_ms": 417.6
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 160.5,
+            "p95_ms": 236.9,
+            "max_ms": 275
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 134.7,
+            "p95_ms": 251.5,
+            "max_ms": 285.1
+          }
+        }
+      ],
+      "wire": {
+        "sent": 8459,
+        "received": 111997,
+        "closed": 0
+      },
+      "fingerprint_unchanged": true
+    },
+    {
+      "concurrency": 3,
+      "mode": "novnc",
+      "measurements": [
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 186.9,
+            "p95_ms": 495.5,
+            "max_ms": 1417
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 185.4,
+            "p95_ms": 278.4,
+            "max_ms": 517.5
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 291.0,
+            "p95_ms": 596.1,
+            "max_ms": 701.8
+          }
+        },
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 217.8,
+            "p95_ms": 1262.8,
+            "max_ms": 2215.6
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 248.8,
+            "p95_ms": 1083.7,
+            "max_ms": 1276.8
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 252.1,
+            "p95_ms": 1346.8,
+            "max_ms": 1488.8
+          }
+        },
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 195.0,
+            "p95_ms": 464.5,
+            "max_ms": 1694.6
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 173.4,
+            "p95_ms": 322.7,
+            "max_ms": 460.7
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 331.2,
+            "p95_ms": 617.7,
+            "max_ms": 674.9
+          }
+        }
+      ],
+      "wire": {
+        "sent": 18022,
+        "received": 868842,
+        "closed": 0
+      },
+      "fingerprint_unchanged": true
+    },
+    {
+      "concurrency": 3,
+      "mode": "kasm",
+      "measurements": [
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 159.8,
+            "p95_ms": 1950.2,
+            "max_ms": 2176.2
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 295.5,
+            "p95_ms": 2129.4,
+            "max_ms": 2226.9
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 200.7,
+            "p95_ms": 1152.5,
+            "max_ms": 2167.5
+          }
+        },
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 219.7,
+            "p95_ms": 2011.5,
+            "max_ms": 3020.6
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 338.5,
+            "p95_ms": 2132.2,
+            "max_ms": 2226
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 260.4,
+            "p95_ms": 2147.7,
+            "max_ms": 2841.9
+          }
+        },
+        {
+          "click": {
+            "samples": 50,
+            "median_ms": 148.1,
+            "p95_ms": 239,
+            "max_ms": 321.5
+          },
+          "typing": {
+            "samples": 50,
+            "median_ms": 158.0,
+            "p95_ms": 235,
+            "max_ms": 335.8
+          },
+          "scroll": {
+            "samples": 50,
+            "median_ms": 211.5,
+            "p95_ms": 844,
+            "max_ms": 2409.7
+          }
+        }
+      ],
+      "wire": {
+        "sent": 34587,
+        "received": 586616,
+        "closed": 0
+      },
+      "fingerprint_unchanged": true
+    }
+  ],
+  "errors": [],
+  "soak_seconds": 0,
+  "note": "Automation host measurements; not a substitute for the user's network/device.",
+  "server": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 0
+  },
+  "limitations": [
+    "Preliminary measurement on the automation host, not the production/user network.",
+    "Three-profile run used tabs in one context; background rendering may confound its tail latency.",
+    "First-wheel initialization excluded from steady-state samples; see functional report."
+  ]
+}

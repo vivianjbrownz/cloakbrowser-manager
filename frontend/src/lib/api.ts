@@ -259,7 +259,9 @@ export interface ResearchProviderConfig {
   }>;
 }
 
-class ApiError extends Error {
+export type ViewerImplementation = "novnc" | "kasm";
+
+export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
@@ -311,6 +313,7 @@ export const api = {
       role?: "admin" | "scoped";
       email?: string;
       assigned_profile_id?: string;
+      viewer_default?: ViewerImplementation;
     }>("/api/auth/status"),
 
   login: (token: string) =>
@@ -325,6 +328,9 @@ export const api = {
   listProfiles: () => request<Profile[]>("/api/profiles"),
 
   getProfile: (id: string) => request<Profile>(`/api/profiles/${id}`),
+
+  getProfileStatus: (id: string, signal?: AbortSignal) =>
+    request<{ status: "running" | "stopped" }>(`/api/profiles/${id}/status`, { signal }),
 
   createProfile: (data: ProfileCreateData) =>
     request<Profile>("/api/profiles", {

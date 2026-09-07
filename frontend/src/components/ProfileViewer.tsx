@@ -1,28 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import { ClipboardCopy, Code2, Gauge, Maximize2, Minimize2 } from "lucide-react";
-import { api } from "../lib/api";
+import { api, ApiError, type ViewerImplementation } from "../lib/api";
+import { createViewer, VIEWER_QUALITY_MODES, type ViewerConnection, type ViewerQualityMode } from "../lib/viewer";
 
 interface ProfileViewerProps {
   profileId: string;
   cdpUrl: string | null;
   clipboardSync: boolean;
   onDisconnect: () => void;
+  defaultImplementation?: ViewerImplementation;
 }
 
 // X11 keysym for V key (Ctrl is already held in VNC by the time we intercept)
 const XK_v = 0x0076;
 const VIEWER_MODE_STORAGE_KEY = "cloakbrowser.viewer.qualityMode";
 
-type ViewerQualityMode = "fast" | "balanced" | "sharp";
+const IMPLEMENTATION_STORAGE_KEY = "cloakbrowser.viewer.implementation";
+const RETRY_DELAYS = [1000, 2000, 4000, 8000, 8000];
 
-const VIEWER_QUALITY_MODES: Record<
-  ViewerQualityMode,
-  { label: string; qualityLevel: number; compressionLevel: number }
-> = {
-  fast: { label: "Fast", qualityLevel: 4, compressionLevel: 7 },
-  balanced: { label: "Balanced", qualityLevel: 6, compressionLevel: 5 },
-  sharp: { label: "Sharp", qualityLevel: 9, compressionLevel: 2 },
-};
+function loadImplementation(fallback: ViewerImplementation): ViewerImplementation {
+  try {
+    const saved = localStorage.getItem(IMPLEMENTATION_STORAGE_KEY);
+    if (saved === "kasm" || saved === "novnc") return saved;
+  } catch { /* Storage may be disabled. */ }
+  return fallback;
+}
 
 function loadViewerQualityMode(): ViewerQualityMode {
   try {
@@ -44,93 +46,143 @@ function saveViewerQualityMode(mode: ViewerQualityMode) {
   }
 }
 
-function applyViewerQualityMode(rfb: any, mode: ViewerQualityMode) {
-  const preset = VIEWER_QUALITY_MODES[mode];
-  rfb.qualityLevel = preset.qualityLevel;
-  rfb.compressionLevel = preset.compressionLevel;
-}
-
-export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboardSync, onDisconnect }: ProfileViewerProps) {
+export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboardSync, onDisconnect, defaultImplementation = "novnc" }: ProfileViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const rfbRef = useRef<any>(null);
+  const inputScopeRef = useRef<HTMLDivElement>(null);
+  const keyboardRef = useRef<HTMLTextAreaElement>(null);
+  const connectionRef = useRef<ViewerConnection | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [clipboardSync, setClipboardSync] = useState(initialClipboardSync);
   const [cdpCopied, setCdpCopied] = useState(false);
   const [viewerMode, setViewerMode] = useState<ViewerQualityMode>(loadViewerQualityMode);
+  const [implementation, setImplementation] = useState(() => loadImplementation(defaultImplementation));
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [reconnectKey, setReconnectKey] = useState(0);
+  const qualityRef = useRef(viewerMode);
+  const onDisconnectRef = useRef(onDisconnect);
+  onDisconnectRef.current = onDisconnect;
+
+  useEffect(() => setClipboardSync(initialClipboardSync), [profileId, initialClipboardSync]);
 
   useEffect(() => {
-    let rfb: any = null;
-    let cancelled = false;
+    const controller = new AbortController();
+    let connection: ViewerConnection | null = null;
+    let detach = () => {};
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let connectTimer: ReturnType<typeof setTimeout> | undefined;
+    let stableTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    setConnected(false);
+    setError(null);
+    setRetryAttempt(0);
 
-    async function connect() {
+    function disposeConnection() {
+      clearTimeout(connectTimer);
+      clearTimeout(stableTimer);
+      detach();
+      const old = connection;
+      connection = null;
+      if (connectionRef.current === old) connectionRef.current = null;
+      try { old?.rfb.disconnect(); } catch (err) {
+        console.debug("[vnc] disconnect cleanup failed:", err);
+      }
+    }
+
+    function fail(message: string) {
+      if (controller.signal.aborted) return;
+      disposeConnection();
+      setConnected(false);
+      setError(message);
+    }
+
+    function retry() {
+      if (controller.signal.aborted) return;
+      disposeConnection();
+      setConnected(false);
+      const delay = RETRY_DELAYS[attempts++];
+      if (delay === undefined) {
+        fail("Unable to reconnect. Retry or select Compatibility mode.");
+        return;
+      }
+      setRetryAttempt(attempts);
+      retryTimer = setTimeout(() => void connect(true), delay);
+    }
+
+    async function connect(checkStatus = false) {
       try {
-        // Import noVNC dynamically
-        const { default: RFB } = await import("@novnc/novnc/core/rfb.js");
-
-        if (cancelled) return;
-
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const wsUrl = `${protocol}//${window.location.host}/api/profiles/${profileId}/vnc`;
-
-        rfb = new RFB(containerRef.current!, wsUrl, {
-          wsProtocols: ["binary"],
-        });
-        rfbRef.current = rfb;
-
-        rfb.scaleViewport = true;
-        rfb.resizeSession = false;
-        rfb.showDotCursor = true;
-        applyViewerQualityMode(rfb, viewerMode);
-
-        rfb.addEventListener("connect", () => {
-          if (!cancelled) setConnected(true);
-        });
-
-        rfb.addEventListener("disconnect", () => {
-          if (!cancelled) {
-            setConnected(false);
-            onDisconnect();
+        if (checkStatus) {
+          // This protected endpoint checks authentication AND Profile assignment.
+          const status = await api.getProfileStatus(profileId, AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]));
+          if (controller.signal.aborted) return;
+          if (status.status !== "running") {
+            fail("Profile stopped. Start it from the profile controls.");
+            onDisconnectRef.current();
+            return;
           }
-        });
-
-        rfb.addEventListener("securityfailure", (e: any) => {
-          setError(`Security failure: ${e.detail.reason}`);
-        });
+        }
+        if (controller.signal.aborted) return;
+        const created = await createViewer(implementation, containerRef.current!, keyboardRef.current!, profileId, controller.signal);
+        if (!created) return;
+        connection = created;
+        connectionRef.current = created;
+        created.applyQuality(qualityRef.current);
+        const handleConnect = () => {
+          if (controller.signal.aborted || connection !== created) return;
+          clearTimeout(connectTimer);
+          setConnected(true);
+          setRetryAttempt(0);
+          // A flapping connection must not reset the bounded retry budget.
+          stableTimer = setTimeout(() => { attempts = 0; }, 30000);
+        };
+        const handleDisconnect = () => {
+          if (connection !== created) return;
+          retry();
+          onDisconnectRef.current();
+        };
+        const handleSecurity = () => fail("Viewer access denied. Sign in again or select Compatibility mode.");
+        const listeners: Array<[string, () => void]> = [
+          ["connect", handleConnect], ["disconnect", handleDisconnect],
+          ["securityfailure", handleSecurity], ["credentialsrequired", handleSecurity],
+        ];
+        for (const [type, listener] of listeners) created.rfb.addEventListener(type, listener);
+        detach = () => {
+          for (const [type, listener] of listeners) created.rfb.removeEventListener(type, listener);
+        };
+        connectTimer = setTimeout(retry, 12000);
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to connect");
+        if (controller.signal.aborted) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) {
+          fail(err.status === 404 ? "Profile no longer exists." : "Access expired or this Profile is no longer assigned to you.");
+        } else {
+          retry();
         }
       }
     }
 
-    connect();
-
+    void connect();
     return () => {
-      cancelled = true;
-      if (rfb) {
-        try {
-          rfb.disconnect();
-        } catch (err) {
-          console.debug("[vnc] disconnect cleanup failed:", err);
-        }
-      }
-      rfbRef.current = null;
+      controller.abort();
+      clearTimeout(retryTimer);
+      disposeConnection();
     };
-  }, [profileId, onDisconnect]);
+  }, [profileId, implementation, reconnectKey]);
 
   const selectViewerMode = (mode: ViewerQualityMode) => {
     setViewerMode(mode);
+    qualityRef.current = mode;
     saveViewerQualityMode(mode);
-    if (rfbRef.current) {
-      applyViewerQualityMode(rfbRef.current, mode);
-    }
+    connectionRef.current?.applyQuality(mode);
   };
 
-  const sendPasteKeys = () => {
-    const rfb = rfbRef.current;
-    if (!rfb) return;
+  const selectImplementation = (value: ViewerImplementation) => {
+    try { localStorage.setItem(IMPLEMENTATION_STORAGE_KEY, value); } catch { /* Optional preference. */ }
+    setImplementation(value);
+  };
+
+  const sendPasteKeys = (connection: ViewerConnection) => {
+    const rfb = connection.rfb;
     // Send the full Ctrl+V sequence because the host key state can change
     // while the async clipboard API call is in flight.
     rfb.sendKey(0xffe3, "ControlLeft", true);
@@ -142,40 +194,58 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
   // Host→VNC: intercept Ctrl+V/Cmd+V at keydown (capture phase)
   // Must fire BEFORE noVNC's canvas listener to prevent the race condition
   useEffect(() => {
-    const container = containerRef.current;
+    const container = inputScopeRef.current;
     if (!container || !connected) return;
+    let cancelled = false;
+    let pasting = false;
 
     const handleKeyDown = async (e: KeyboardEvent) => {
       const isPaste =
-        e.key === "v" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+        e.key.toLowerCase() === "v" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
       if (!isPaste) return;
 
       // Block noVNC from sending the keystroke before clipboard is updated
       e.stopPropagation();
       e.preventDefault();
+      if (pasting || e.repeat) return;
+      const connection = connectionRef.current;
+      if (!connection) return;
+      pasting = true;
+      let writingClipboard = false;
 
       try {
         const text = await navigator.clipboard.readText();
+        if (cancelled || connectionRef.current !== connection) return;
         if (text) {
+          writingClipboard = true;
           await api.setClipboard(profileId, text);
         }
       } catch (err) {
         console.warn("[clipboard] one-time paste failed:", err);
+        if (writingClipboard) {
+          pasting = false;
+          if (!cancelled) setError("Could not update the remote clipboard. Try pasting again.");
+          return;
+        }
       }
 
-      sendPasteKeys();
+      if (!cancelled && connectionRef.current === connection) sendPasteKeys(connection);
+      pasting = false;
     };
 
     // capture: true ensures we fire before noVNC's canvas listener
     container.addEventListener("keydown", handleKeyDown, true);
-    return () => container.removeEventListener("keydown", handleKeyDown, true);
-  }, [profileId, connected]);
+    return () => {
+      cancelled = true;
+      container.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [profileId, connected, implementation]);
 
   // VNC→Host: listen for noVNC "clipboard" event (fired when proxy converts
   // KasmVNC BinaryClipboard type 180 → standard ServerCutText type 3)
   useEffect(() => {
-    const rfb = rfbRef.current;
-    if (!rfb || !clipboardSync || !connected) return;
+    const rfb = connectionRef.current?.rfb;
+    if (!rfb || !clipboardSync || !connected || implementation !== "novnc") return;
 
     const handleClipboard = (e: any) => {
       const text = e.detail?.text;
@@ -190,7 +260,7 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
     return () => {
       rfb.removeEventListener("clipboard", handleClipboard);
     };
-  }, [clipboardSync, connected]);
+  }, [clipboardSync, connected, implementation]);
 
   // VNC→Host polling: Chrome doesn't write to X11 clipboard under KasmVNC,
   // so type 180 events won't fire for Chrome copies. Poll via Playwright CDP.
@@ -199,11 +269,13 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
 
     let cancelled = false;
     let lastText = "";
+    let timer: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
       if (cancelled) return;
       try {
         const { text } = await api.getClipboard(profileId);
+        if (cancelled) return;
         if (text && text !== lastText) {
           lastText = text;
           await navigator.clipboard.writeText(text).catch((err) =>
@@ -216,12 +288,12 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         return;
       }
       if (!cancelled) {
-        setTimeout(poll, 2000);
+        timer = setTimeout(poll, 2000);
       }
     };
 
     // Start polling after a short delay
-    const timer = setTimeout(poll, 2000);
+    timer = setTimeout(poll, 2000);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -229,13 +301,11 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
   }, [profileId, clipboardSync, connected]);
 
   const toggleFullscreen = () => {
-    if (!containerRef.current) return;
+    if (!inputScopeRef.current) return;
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen();
-      setFullscreen(true);
+      inputScopeRef.current.requestFullscreen().catch(() => setError("Fullscreen is unavailable in this browser."));
     } else {
-      document.exitFullscreen();
-      setFullscreen(false);
+      void document.exitFullscreen();
     }
   };
 
@@ -259,28 +329,26 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
     return () => container.removeEventListener("wheel", handleWheel);
   }, []);
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <p className="text-red-400 text-sm mb-2">Connection failed</p>
-          <p className="text-gray-500 text-xs">{error}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="relative h-full flex flex-col">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-1 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-surface-1 border-b border-border">
         <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-yellow-400 animate-pulse"}`} />
-          <span className="text-xs text-gray-400">
-            {connected ? "Connected" : "Connecting..."}
+          <span aria-hidden="true" className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : error ? "bg-red-400" : "bg-yellow-400"}`} />
+          <span className="text-xs text-gray-400" role="status">
+            {connected ? "Connected" : error ? "Disconnected" : retryAttempt ? `Reconnecting (${retryAttempt}/5)…` : "Connecting..."}
           </span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
+          <select
+            aria-label="Viewer client"
+            value={implementation}
+            onChange={(event) => selectImplementation(event.target.value as ViewerImplementation)}
+            className="rounded border border-border bg-surface-2 px-2 py-1 text-xs text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <option value="kasm">KasmVNC</option>
+            <option value="novnc">Compatibility</option>
+          </select>
           <div className="flex items-center gap-1 mr-1" title="Viewer quality">
             <Gauge className="h-3.5 w-3.5 text-gray-500" />
             <div className="flex overflow-hidden rounded border border-border">
@@ -289,7 +357,8 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
                   key={mode}
                   type="button"
                   onClick={() => selectViewerMode(mode)}
-                  className={`px-2 py-1 text-[11px] leading-none ${
+                  aria-pressed={viewerMode === mode}
+                  className={`px-2 py-1 text-[11px] leading-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
                     viewerMode === mode
                       ? "bg-accent text-white"
                       : "bg-surface-2 text-gray-400 hover:text-gray-200"
@@ -334,13 +403,26 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         </div>
       </div>
 
+      {error && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-1 px-3 py-2">
+          <p role="alert" className="text-sm text-gray-300">{error}</p>
+          <button type="button" className="btn-secondary" onClick={() => setReconnectKey((key) => key + 1)}>Reconnect</button>
+        </div>
+      )}
+
       {/* VNC canvas container */}
-      <div
-        ref={containerRef}
-        data-testid="vnc-canvas-container"
-        className="flex-1 bg-black overflow-hidden"
-        style={{ minHeight: 0 }}
-      />
+      <div ref={inputScopeRef} className="relative flex-1 min-h-0 bg-black overflow-hidden">
+        <div ref={containerRef} data-testid="vnc-canvas-container" className="absolute inset-0" />
+        <textarea
+          ref={keyboardRef}
+          aria-label="Remote browser keyboard"
+          className="sr-only"
+          tabIndex={-1}
+          autoCapitalize="off"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Bot, Lock, Microscope, MonitorUp, PanelLeftClose, PanelLeft, Table2 } from "lucide-react";
 import { useProfiles } from "./hooks/useProfiles";
-import { api, setOnUnauthorized, type ProfileCreateData } from "./lib/api";
+import { api, setOnUnauthorized, type ProfileCreateData, type ViewerImplementation } from "./lib/api";
 import { ProfileList } from "./components/ProfileList";
 import { ProfileForm } from "./components/ProfileForm";
 import { ProfileViewer } from "./components/ProfileViewer";
@@ -22,14 +22,16 @@ export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [authRequired, setAuthRequired] = useState(false);
   const [scopedMode, setScopedMode] = useState(false);
+  const [viewerDefault, setViewerDefault] = useState<ViewerImplementation>("novnc");
 
   useEffect(() => {
     setOnUnauthorized(() => setAuthState("required"));
 
     api.authStatus()
-      .then(({ auth_required, authenticated, role }) => {
+      .then(({ auth_required, authenticated, role, viewer_default }) => {
         setAuthRequired(auth_required);
         setScopedMode(role === "scoped");
+        setViewerDefault(viewer_default === "kasm" ? "kasm" : "novnc");
         if (!auth_required || authenticated) {
           setAuthState("ok");
         } else {
@@ -61,8 +63,10 @@ export default function App() {
             onClick={() => {
               setAuthState("checking");
               api.authStatus()
-                .then(({ auth_required, authenticated }) => {
+                .then(({ auth_required, authenticated, role, viewer_default }) => {
                   setAuthRequired(auth_required);
+                  setScopedMode(role === "scoped");
+                  setViewerDefault(viewer_default === "kasm" ? "kasm" : "novnc");
                   setAuthState(!auth_required || authenticated ? "ok" : "required");
                 })
                 .catch(() => setAuthState("error"));
@@ -84,6 +88,7 @@ export default function App() {
     <AppContent
       authRequired={authRequired}
       scopedMode={scopedMode}
+      viewerDefault={viewerDefault}
       onLogout={async () => {
         await api.logout();
         setAuthState("required");
@@ -95,6 +100,7 @@ export default function App() {
 interface AppContentProps {
   authRequired: boolean;
   scopedMode: boolean;
+  viewerDefault: ViewerImplementation;
   onLogout: () => void;
 }
 
@@ -159,7 +165,7 @@ function BrowserUiPrompt({ locale, profileStatus, busy, error, onStart }: Browse
   );
 }
 
-function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
+function AppContent({ authRequired, scopedMode, viewerDefault, onLogout }: AppContentProps) {
   const { profiles, loading, error, refresh, create, update, remove, archive, restore, launch, stop } = useProfiles();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("inventory");
@@ -242,8 +248,8 @@ function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
   }, [handleStopProfile, selectedId]);
 
   const handleVncDisconnect = useCallback(() => {
-    setView("edit");
-  }, []);
+    void refresh();
+  }, [refresh]);
 
   const handleStartUi = useCallback(async (profileId: string) => {
     if (uiTransitioningRef.current) return;
@@ -322,6 +328,7 @@ function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
             <ProfileViewer
               key={assigned.id}
               profileId={assigned.id}
+              defaultImplementation={viewerDefault}
               cdpUrl={null}
               clipboardSync={assigned.clipboard_sync}
               onDisconnect={refresh}
@@ -504,6 +511,7 @@ function AppContent({ authRequired, scopedMode, onLogout }: AppContentProps) {
             <ProfileViewer
               key={selected.id}
               profileId={selected.id}
+              defaultImplementation={viewerDefault}
               cdpUrl={selected.cdp_url}
               clipboardSync={selected.clipboard_sync}
               onDisconnect={handleVncDisconnect}

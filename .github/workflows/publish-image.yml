@@ -17,7 +17,33 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/cloakbrowser-manager
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify bundled KasmVNC sources
+        run: python ops/verify_kasm_vendor.py
+      - name: Frontend tests and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Backend tests
+        run: |
+          python -m pip install -r backend/requirements.txt pytest pytest-asyncio
+          python -m pytest backend/tests -q
+
   publish:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

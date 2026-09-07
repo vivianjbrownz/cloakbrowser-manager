@@ -1,0 +1,54 @@
+{
+  "base_url": "http://127.0.0.1:18981",
+  "timestamp_utc": "2026-09-07T16:02:40Z",
+  "cases": [
+    {
+      "concurrency": 1,
+      "mode": "kasm",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "click": {
+            "samples": 3,
+            "median_ms": 154.3,
+            "p95_ms": 170.8,
+            "max_ms": 170.8
+          },
+          "typing": {
+            "samples": 3,
+            "median_ms": 149.8,
+            "p95_ms": 150.7,
+            "max_ms": 150.7
+          },
+          "scroll": {
+            "samples": 3,
+            "median_ms": 171.7,
+            "p95_ms": 286.1,
+            "max_ms": 286.1
+          },
+          "first_scroll_received": false
+        }
+      ],
+      "wire": {
+        "sent": 2266,
+        "received": 93916,
+        "closed": 0
+      },
+      "functional": {
+        "chinese_composition": true,
+        "paste_once_without_sync": true,
+        "quality_fullscreen_session_preserved": true,
+        "reconnect_without_browser_restart": true
+      },
+      "fingerprint_unchanged": true
+    }
+  ],
+  "errors": [],
+  "soak_seconds": 0,
+  "note": "Automation host measurements; not a substitute for the user's network/device.",
+  "server": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 0
+  }
+}

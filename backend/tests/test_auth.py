@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -179,3 +180,37 @@ def test_scoped_identity_cannot_use_admin_apis(client_scoped):
     }
     assert client.delete(f"/api/profiles/{assigned['id']}", headers=headers).status_code == 403
     assert client.get("/api/inventory/rows", headers=headers).status_code == 403
+
+
+@pytest.mark.parametrize("endpoint", ["vnc", "vnc-native"])
+def test_viewer_requires_authentication(client_auth, endpoint):
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client_auth.websocket_connect(f"/api/profiles/unknown/{endpoint}"):
+            pass
+    assert exc.value.code == 4401
+
+
+@pytest.mark.parametrize("endpoint", ["vnc", "vnc-native"])
+def test_scoped_viewer_checks_assignment_and_origin(client_scoped, endpoint):
+    client, assigned = client_scoped
+    headers = {"X-AgentOS-Scoped-Secret": "scoped-secret", "X-AgentOS-Email": "user@example.com"}
+    for profile, origin, code in [
+        ("hidden", "http://testserver", 4403),
+        (assigned["id"], "https://elsewhere.example", 4403),
+        (assigned["id"], "http://testserver", 4004),  # Authorized, but stopped.
+    ]:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client.websocket_connect(f"/api/profiles/{profile}/{endpoint}", headers={**headers, "Origin": origin}):
+                pass
+        assert exc.value.code == code
+
+
+@pytest.mark.parametrize("default", ["novnc", "kasm"])
+def test_viewer_default_is_available_to_admin_and_scoped(client_scoped, monkeypatch, default):
+    from backend import main
+    monkeypatch.setattr(main, "VIEWER_DEFAULT", default)
+    client, _ = client_scoped
+    for headers in [{"Authorization": "Bearer test-secret"}, {
+        "X-AgentOS-Scoped-Secret": "scoped-secret", "X-AgentOS-Email": "user@example.com",
+    }]:
+        assert client.get("/api/auth/status", headers=headers).json()["viewer_default"] == default
