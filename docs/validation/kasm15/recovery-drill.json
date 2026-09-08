@@ -1,0 +1,6 @@
+{
+  "backup_failure_restored_original_container": true,
+  "restart_policy_preserved": true,
+  "real_release_rollback_passed": true,
+  "private_backup_mode": "0700"
+}

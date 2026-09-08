@@ -56,8 +56,10 @@ fingerprints must match across versions. Chinese composition, bidirectional
 clipboard, fullscreen/quality changes, reconnect and mobile canvas resizing
 must pass. Three native viewers must remain connected for 30 minutes.
 
-The soak sends an input every 30 seconds to each viewer; it measures connection
-stability under intermittent interaction, not continuous video rendering.
+The soak sends an input every 30 seconds to each viewer and requires painted
+feedback each time. Distinct per-Profile paste payloads check input and clipboard
+isolation. It measures connection stability under intermittent interaction, not
+continuous video rendering.
 Capacity calibration opens 5, 10 and 20 browser Profiles with only three
 streamed viewers. Background tabs update text every five seconds. It stops on
 low host memory or CPU saturation for 60 seconds. Results describe this light
@@ -68,6 +70,14 @@ Video is a separate decision: run the same workload in image and H.264 modes
 on the same video-capable candidate. Require click/typing P95 regression <=10%,
 scroll P95 improvement >=20%, mean container CPU increase <=10%, and readable
 Chinese text. Leave the flag off if any evidence is missing or fails.
+
+```sh
+.venv/bin/python ops/qa_kasm_suite.py --comparison video \
+  --baseline-url http://127.0.0.1:18983 --candidate-url http://127.0.0.1:18983 \
+  --baseline-container cloak-kasm15-video-qa --candidate-container cloak-kasm15-video-qa \
+  --token-file /secure/qa/token --output-dir /secure/qa/video
+python ops/kasm_video_acceptance.py /secure/qa/video/rounds.json
+```
 
 ## Actual mainland / Singapore VPN ingress
 

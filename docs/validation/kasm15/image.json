@@ -1,0 +1,7 @@
+{
+  "source_commit": "e1cfe505e2abef9faf4635b31fdedfa901cf7ad7",
+  "image_id": "sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "pull_reference": "ghcr.io/vivianjbrownz/cloakbrowser-manager@sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "ci_url": "https://github.com/vivianjbrownz/cloakbrowser-manager/actions/runs/34184822614",
+  "baseline_image_id": "sha256:00248081377244b290852ea0457221a9e5bcb0d97fe6e4927d6bc885b44d17a5"
+}

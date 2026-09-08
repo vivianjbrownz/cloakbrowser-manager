@@ -62,6 +62,26 @@ def test_default_switch_requires_stability_run(tmp_path: Path):
         validate_acceptance(path)
 
 
+def test_default_promotion_requires_current_image_actual_ingress_and_first_input(tmp_path: Path):
+    path = tmp_path/"report.json"
+    payload = report()
+    payload.update(image_id="sha256:current", network_label="automation-host")
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="mainland/Singapore"):
+        validate_acceptance(path, "sha256:current")
+    payload["network_label"] = "mainland-vpn-singapore"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="First-input"):
+        validate_acceptance(path, "sha256:current")
+    for case in payload["cases"]:
+        for measurement in case["measurements"]:
+            measurement.update(first_click_received=True, first_scroll_received=True)
+    path.write_text(json.dumps(payload))
+    validate_acceptance(path, "sha256:current")
+    with pytest.raises(ValueError, match="mainland/Singapore"):
+        validate_acceptance(path, "sha256:other")
+
+
 @pytest.mark.parametrize("case_index", [1, 3])
 @pytest.mark.parametrize("failed", [False, True])
 def test_good_latency_cannot_override_missing_or_failed_functional_checks(tmp_path: Path, case_index, failed):

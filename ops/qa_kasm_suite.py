@@ -60,11 +60,14 @@ def run(args):
         for label in labels:
             container, url = getattr(args, label+"_container"), getattr(args, label+"_url")
             path = output/f"{label}-{round_index+1}.json"
-            modes = ["novnc", "kasm"] if round_index % 2 == 0 else ["kasm", "novnc"]
+            modes = ["kasm"] if args.comparison == "video" else (
+                ["novnc", "kasm"] if round_index % 2 == 0 else ["kasm", "novnc"])
             command = [sys.executable, str(Path(__file__).with_name("qa_kasmvnc.py")),
                        "--base-url", url, "--token-file", args.token_file, "--chromium", args.chromium,
                        "--samples", str(args.samples), "--concurrency", "1", "3", "--modes", *modes,
                        "--container", container, "--output", str(path)]
+            if args.comparison == "video":
+                command.extend(["--stream-mode", "h264" if label == "candidate" else "image"])
             print(f"Round {round_index+1}/{args.rounds}: {label}", flush=True)
             bundle[label].append(run_case(command, container, path, path.with_suffix(".log")))
             (output/"rounds.json").write_text(json.dumps(bundle, indent=2)+"\n")
@@ -81,6 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("--chromium", default="/usr/bin/google-chrome")
     parser.add_argument("--samples", type=int, default=50)
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--comparison", choices=["version", "video"], default="version")
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
     if args.rounds < 1 or args.samples < 1:

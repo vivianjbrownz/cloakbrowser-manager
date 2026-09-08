@@ -10,10 +10,11 @@ def evidence():
     before = {**identity, "system_packages": {"kasmvncserver": "1.3.3-1"}}
     after = {**identity, "system_packages": {"kasmvncserver": "1.5.0-1"}}
     def run(image):
-        return {"run_id": uuid4().hex, "image_id": image, "errors": [], "soak_seconds": 1800, "cases": [
+        return {"run_id": uuid4().hex, "image_id": image, "errors": [], "soak_seconds": 1800,
+                "soak_painted_feedback": [{"samples": 60}] * 3, "cases": [
             {"mode": mode, "concurrency": n, "stream_mode": "image", "wire": {"closed": 0},
              "fingerprint_unchanged": True, "fingerprints": [{"canvas": str(i)} for i in range(n)],
-             "functional": {key: True for key in FUNCTIONAL},
+             "functional": {key: True for key in (*FUNCTIONAL, "concurrent_input_clipboard_isolation")},
              "measurements": [{action: {"samples": 50, "p95_ms": 200} for action in ("click", "typing", "scroll")} for _ in range(n)]}
             for mode in ("novnc", "kasm") for n in (1, 3)]}
     return {"baseline_image_id": "old", "runtime_before": before, "runtime_after": after, "baseline": [run("old") for _ in range(3)],

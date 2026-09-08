@@ -74,6 +74,12 @@ def evaluate(report, image_id, baseline_image_id=None):
     stable = next((c for c in soak.get("cases", []) if c["concurrency"] == 3 and c["mode"] == "kasm"), None)
     if not stable or stable["wire"]["closed"] or not all(stable.get("functional", {}).get(k) is True for k in FUNCTIONAL):
         errors.append("Three-viewer stability/functional evidence is incomplete")
+    if not stable or stable.get("functional", {}).get("concurrent_input_clipboard_isolation") is not True:
+        errors.append("Concurrent input/clipboard isolation evidence is required")
+    if len(soak.get("soak_painted_feedback", [])) != 3 or any(
+        m.get("samples", 0) < 50 for m in soak.get("soak_painted_feedback", [])
+    ):
+        errors.append("Stability must verify painted feedback throughout the run")
     return {"passed": not errors, "errors": sorted(set(errors)), "image_id": image_id, "comparisons": results,
             "runtime": runtime, "default_promotion": False}
 

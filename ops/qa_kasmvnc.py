@@ -216,7 +216,7 @@ async def run(args):
                                     await page.mouse.wheel(0, 120)
                                     await target.locator("#text").focus()
                                     await page.wait_for_timeout(200)
-                                    results = {"visibility": await page.evaluate("document.visibilityState")}
+                                    results = {"visibility": await page.evaluate("document.visibilityState"), "marker_pixel": point}
                                     for action, event in [("click", "mousedown"), ("typing", "keydown"), ("scroll", "wheel")]:
                                         if action == "typing":
                                             await target.locator("#text").focus()
@@ -329,21 +329,41 @@ async def run(args):
                                     functional["mobile_container_resize_without_remote_resize"] = True
                                     await page.screenshot(path=str(Path(args.output).parent / "viewer-mobile.png"))
                                     await page.set_viewport_size({"width": 1500, "height": 1100})
+                                    # Distinct payloads expose cross-Profile routing even
+                                    # when simultaneous timing samples used the same key.
+                                    for target in remote_pages[:concurrency]:
+                                        await target.locator("#text").fill("")
+                                    for i, (local, target) in enumerate(zip(pages, remote_pages)):
+                                        await target.locator("#text").focus()
+                                        await local.get_by_role("textbox", name="Remote browser keyboard").focus()
+                                        payload = f"Profile {i} 独立剪贴板"
+                                        await local.evaluate("text => navigator.clipboard.writeText(text)", payload)
+                                        await local.keyboard.press("Control+v")
+                                        await target.wait_for_function("value => text.value === value", arg=payload, timeout=5000)
+                                    for i, target in enumerate(remote_pages[:concurrency]):
+                                        assert await target.locator("#text").input_value() == f"Profile {i} 独立剪贴板"
+                                    functional["concurrent_input_clipboard_isolation"] = True
                                 if mode == "kasm" and args.soak_seconds and concurrency == max(args.concurrency):
+                                    soak_feedback = [[] for _ in pages]
                                     soak_started = time.monotonic()
                                     deadline = soak_started+args.soak_seconds
                                     while time.monotonic() < deadline:
                                         capacity_guard()
-                                        for page in pages:
+                                        for i, (page, target) in enumerate(zip(pages, remote_pages)):
+                                            await target.locator("#text").focus()
+                                            await page.get_by_role("textbox", name="Remote browser keyboard").focus()
+                                            await page.evaluate(ARM_SAMPLE, {**measurements[i]["marker_pixel"], "eventType": "keydown"})
                                             await page.keyboard.press("ArrowDown")
+                                            soak_feedback[i].append(await page.evaluate("window.__viewerSample"))
                                             assert await page.get_by_text("Connected", exact=True).count() == 1
                                         await asyncio.sleep(min(30, max(0, deadline-time.monotonic())))
                                         print(f"soak concurrency={concurrency}: {max(0, round(deadline-time.monotonic()))}s remaining", flush=True)
                                     report["soak_seconds"] = round(time.monotonic()-soak_started, 2)
+                                    report["soak_painted_feedback"] = [summarize(samples) for samples in soak_feedback]
                                 assert not errors, f"Viewer JavaScript errors: {errors}"
                                 assert wire["closed"] == 0, "Unexpected viewer disconnect"
                                 report["cases"].append({"concurrency": concurrency, "mode": mode, "stream_mode": args.stream_mode,
-                                    "measurements": measurements, "wire": wire, "measured_wire": measured_wire,
+                                    "measurements": measurements, "wire": dict(wire), "measured_wire": measured_wire,
                                     "measurement_started_at": measured_at,
                                     "measurement_ended_at": measured_at+measured_seconds,
                                     "measured_seconds": round(measured_seconds, 3), "fingerprints": before[:concurrency],
