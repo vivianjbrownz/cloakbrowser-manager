@@ -7,11 +7,12 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 
 LABEL org.opencontainers.image.source="https://github.com/vivianjbrownz/cloakbrowser-manager"
 LABEL org.opencontainers.image.description="BeginOS inventory build of CloakBrowser Manager"
 LABEL org.opencontainers.image.licenses="MIT"
+LABEL io.cloakbrowser.kasmvnc.version="1.5.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -33,11 +34,14 @@ RUN echo "deb http://deb.debian.org/debian trixie contrib" >> /etc/apt/sources.l
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
-ARG TARGETARCH
-RUN wget -q https://github.com/kasmtech/KasmVNC/releases/download/v1.3.3/kasmvncserver_bookworm_1.3.3_${TARGETARCH}.deb \
-    && apt-get update && apt-get install -y -f ./kasmvncserver_bookworm_1.3.3_${TARGETARCH}.deb \
-    && rm kasmvncserver_bookworm_1.3.3_${TARGETARCH}.deb \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libbsd0 libxfont2 libunwind8 ssl-cert xauth x11-xkb-utils xkb-data \
+    libswitch-perl libyaml-tiny-perl libhash-merge-simple-perl \
+    libscalar-list-utils-perl liblist-moreutils-perl libtry-tiny-perl \
+    libdatetime-perl libdatetime-timezone-perl \
     && rm -rf /var/lib/apt/lists/*
+COPY ops/install_kasmvnc.py ops/kasmvnc-runtime.json /opt/kasm-upgrade/
+RUN python /opt/kasm-upgrade/install_kasmvnc.py
 
 WORKDIR /app
 COPY backend/requirements.txt /app/backend/

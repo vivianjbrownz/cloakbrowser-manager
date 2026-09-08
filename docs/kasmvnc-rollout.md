@@ -1,7 +1,9 @@
 # KasmVNC viewer rollout
 
-The Manager can use either its existing noVNC compatibility client or the native
-KasmVNC 1.3.3 client. Users continue to use the same website. The selector in the
+The current source targets the native KasmVNC 1.5.0 client alongside the existing
+noVNC compatibility client. Follow the additional version-upgrade gates in
+[kasmvnc-1.5-upgrade.md](kasmvnc-1.5-upgrade.md). The deployment evidence below
+describes the preceding 1.3.3 release. Users continue to use the same website. The selector in the
 viewer toolbar switches clients without restarting the browser or changing its
 Profile. Existing quality, fullscreen, text clipboard and access controls remain.
 
@@ -82,8 +84,8 @@ binary, 187 font files, Python packages and system package fingerprints matched
 the pinned runtime base during preflight.
 
 1. Publish/pull an immutable image and compare runtime fingerprints on current
-   and candidate containers with `ops/runtime_fingerprint.py`. Verify KasmVNC is
-   still 1.3.3. Keep this check outside the release transaction.
+   and candidate containers with `ops/runtime_fingerprint.py`. For a 1.5.0 image,
+   use the version-upgrade procedure linked above and its required report.
 2. Copy `ops/release_viewer.py` to the Docker host. Its default operation is a
    read-only preflight. It obtains mounts, environment, limits, networks and
    restart policy from Docker, not a hard-coded replacement command.

@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
 import time
 from urllib.parse import quote
 import urllib.request
@@ -88,10 +89,12 @@ def replacement_spec(old, image, default):
     return {**config, "HostConfig": host, "NetworkingConfig": {"EndpointsConfig": endpoints}}
 
 
-def validate_acceptance(path):
+def validate_acceptance(path, image_id=None):
     if not path:
         raise ValueError("A measured --acceptance-report is required to make KasmVNC the default")
     report = json.loads(Path(path).read_text())
+    if image_id and (report.get("image_id") != image_id or report.get("network_label") != "mainland-vpn-singapore"):
+        raise ValueError("Default promotion requires this image tested on the user's mainland/Singapore VPN ingress")
     if report.get("errors"):
         raise ValueError("Acceptance report contains errors")
     cases = {(case["concurrency"], case["mode"]): case for case in report["cases"]}
@@ -107,6 +110,8 @@ def validate_acceptance(path):
             if new.get("functional", {}).get(check) is not True:
                 raise ValueError(f"KasmVNC functional gate not met: concurrency={concurrency}, check={check}")
         for baseline, native in zip(old["measurements"], new["measurements"], strict=True):
+            if image_id and (not native.get("first_click_received") or not native.get("first_scroll_received")):
+                raise ValueError("First-input acceptance failed")
             for action in ("click", "typing", "scroll"):
                 if min(baseline[action]["samples"], native[action]["samples"]) < 50:
                     raise ValueError("At least 50 measured samples per action are required")
@@ -164,8 +169,21 @@ def main(args):
     old = docker("GET", f"/containers/{args.name}/json")
     image = docker("GET", f"/images/{quote(args.image, safe='')}/json")
     spec = replacement_spec(old, image["Id"], args.default)
+    spec["Labels"] = {**(spec.get("Labels") or {}), **{
+        key: value for key, value in (image.get("Config", {}).get("Labels") or {}).items()
+        if key.startswith(("org.opencontainers.image.", "io.cloakbrowser."))}}
+    if image.get("Config", {}).get("Labels", {}).get("io.cloakbrowser.kasmvnc.version") == "1.5.0":
+        if not args.upgrade_report:
+            raise ValueError("A version-upgrade --upgrade-report is required for KasmVNC 1.5.0")
+        try:
+            from ops.kasm_upgrade_acceptance import evaluate
+        except ModuleNotFoundError:
+            from kasm_upgrade_acceptance import evaluate
+        acceptance = evaluate(json.loads(Path(args.upgrade_report).read_text()), image["Id"], old["Image"])
+        if not acceptance["passed"]:
+            raise ValueError("KasmVNC upgrade gate failed: " + "; ".join(acceptance["errors"]))
     if args.default == "kasm":
-        validate_acceptance(args.acceptance_report)
+        validate_acceptance(args.acceptance_report, image["Id"])
     if not old["State"]["Running"]:
         raise RuntimeError("Expected the current Manager to be running")
     print(json.dumps({"container": args.name, "old_image": old["Image"], "new_image": image["Id"],
@@ -182,6 +200,7 @@ def main(args):
     # Re-read just before stopping, so a concurrent release cannot be overwritten.
     if docker("GET", f"/containers/{args.name}/json")["Id"] != old["Id"]:
         raise RuntimeError("Manager changed after preflight")
+    wait_idle(args.port, 0)
     previous = f"{args.name}-pre-kasm-{stamp}"
     state = {"name": args.name, "previous_name": previous, "failed_name": f"{args.name}-failed-{stamp}",
              "previous_restart": old["HostConfig"]["RestartPolicy"],
@@ -191,6 +210,11 @@ def main(args):
     docker("POST", f"/containers/{previous}/update", {"RestartPolicy": {"Name": "no"}})
     new_id = None
     try:
+        # The stopped Manager cannot write its database/Profile data while it
+        # is copied. Backups (including cookies) remain in the private release
+        # directory. A failed copy follows the same old-container recovery path.
+        subprocess.run(["docker", "cp", f"{previous}:/data/.", str(backup/"data")],
+                       check=True, capture_output=True)
         created = docker("POST", f"/containers/create?name={quote(args.name)}", spec)
         new_id = created["Id"]
         state["new_id"] = new_id
@@ -216,6 +240,7 @@ if __name__ == "__main__":
     parser.add_argument("--image")
     parser.add_argument("--default", choices=["novnc", "kasm"], default="novnc")
     parser.add_argument("--acceptance-report")
+    parser.add_argument("--upgrade-report")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--rollback")
     parser.add_argument("--idle-wait", type=int, default=600)

@@ -12,9 +12,14 @@ import Base64 from "./base64.js";
 import { toSigned32bit } from './util/int.js';
 import { isWindows } from './util/browser.js';
 import { uuidv4 } from './util/strings.js';
+// Manager owns the single-viewer UI; never import the upstream global page.
+import { encodings } from "./encodings.js";
+import {Canvas2DRenderer} from "./renderers/Canvas2DRenderer";
+import {WebGLRenderer} from "./renderers/WebGLRenderer";
+import { perfLogger } from './util/performance-logger.js';
 
 export default class Display {
-    constructor(target, isPrimaryDisplay) {
+    constructor(target, rfb, isPrimaryDisplay, videoRenderingMode = 'canvas2d') {
         Log.Debug(">> Display.constructor");
 
         /*
@@ -32,8 +37,6 @@ export default class Display {
         this._maxAsyncFrameQueue = 3;
         this._clearAsyncQueue();
         this._syncFrameQueue = [];
-        this._transparentOverlayImg = null;
-        this._transparentOverlayRect = null;
         this._lastTransparentRectId = "";
 
         this._flushing = false;
@@ -43,29 +46,70 @@ export default class Display {
         this._fbHeight = 0;
 
         this._renderMs = 0;
-        this._prevDrawStyle = "";
+        this._backbuffer = document.createElement('canvas');
         this._target = target;
 
-        if (!this._target) {
-            throw new Error("Target must be set");
-        }
+        const canvas2DRenderer = new Canvas2DRenderer(target, this._backbuffer);
 
-        if (typeof this._target === 'string') {
-            throw new Error('target must be a DOM element');
-        }
+        // Initialize renderer based on video rendering mode setting
+        if (videoRenderingMode === 'webgl') {
+            const webglCanvas = document.createElement('canvas');
+            const gl = webglCanvas.getContext('webgl2', {
+                alpha: false,
+                antialias: false,
+                depth: false,
+                stencil: false,
+                powerPreference: 'high-performance',
+                desynchronized: true,
+                preserveDrawingBuffer: false
+            }) || webglCanvas.getContext('webgl', {
+                alpha: false,
+                antialias: false,
+                depth: false,
+                stencil: false,
+                powerPreference: 'high-performance',
+                desynchronized: true,
+                preserveDrawingBuffer: false
+            });
 
-        if (!this._target.getContext) {
-            throw new Error("no getContext method");
-        }
+            if (gl) {
+                // Initialize WebGL canvas with zero size - will be resized on first frame
+                webglCanvas.width = 0;
+                webglCanvas.height = 0;
 
-        this._targetCtx = this._target.getContext('2d');
+                // Setup WebGL canvas to overlay the 2D canvas
+                webglCanvas.style.position = 'absolute';
+                webglCanvas.style.left = '0';
+                webglCanvas.style.top = '0';
+                webglCanvas.style.pointerEvents = 'none';
+                webglCanvas.style.zIndex = '1';
+                webglCanvas.style.width = '0px';
+                webglCanvas.style.height = '0px';
+
+                // Add WebGL canvas to DOM as a sibling of the target canvas
+                if (target.parentNode) {
+                    target.parentNode.appendChild(webglCanvas);
+                }
+
+                this._renderer = new WebGLRenderer(canvas2DRenderer, gl, webglCanvas);
+                Log.Info("WebGL renderer initialized.");
+            } else {
+                this._renderer = canvas2DRenderer;
+                Log.Info("WebGL unavailable, falling back to Canvas2DRenderer.");
+            }
+        } else {
+            this._renderer = canvas2DRenderer;
+            Log.Info("Canvas2D renderer initialized.");
+        }
 
         Log.Debug("User Agent: " + navigator.userAgent);
 
         // performance metrics
         this._flipCnt = 0;
         this._lastFlip = Date.now();
-        this._droppedFrames = 0;
+        this._droppedFrames = 0; // total count
+        this._droppedFramesRate = 0; //frames dropped per second
+        this._droppedFramesCnt = 0; //dropper frames temp counter
         this._droppedRects = 0;
         this._forcedFrameCnt = 0;
         this._missingFlipRect = 0;
@@ -74,8 +118,16 @@ export default class Display {
             let delta = Date.now() - this._lastFlip;
             if (delta > 0) {
                 this._fps = (this._flipCnt / (delta / 1000)).toFixed(2);
+                if (this._droppedFrames > this._droppedFramesCnt) {
+                    let droppedFrames = this._droppedFrames - this._droppedFramesCnt;
+                    this._droppedFramesRate = (droppedFrames / (delta / 1000)).toFixed(2);
+                } else {
+                    this._droppedFramesRate = 0;
+                }
+                this._droppedFramesCnt = this._droppedFrames;
             }
             Log.Debug('Dropped Frames: ' + this._droppedFrames + ' Dropped Rects: ' + this._droppedRects + ' Forced Frames: ' + this._forcedFrameCnt + ' Missing Flips: ' + this._missingFlipRect + ' Late Flips: ' + this._lateFlipRect);
+
             this._flipCnt = 0;
             this._lastFlip = Date.now();
         }.bind(this), 5000);
@@ -85,11 +137,13 @@ export default class Display {
         this._maxScreens = 4;
         this._scale = 1.0;
         this._clipViewport = false;
-        this._antiAliasing = 0;
         this._fps = 0;
         this._isPrimaryDisplay = isPrimaryDisplay;
         this._screenID = uuidv4();
-        this._screens = [{ 
+        this._registeredWindows = new Map();
+        this._displayWindows = new Map();
+        this._disposed = false;
+        this._screens = [{
             screenID: this._screenID,
             screenIndex: 0,
             width: this._target.width, //client
@@ -111,20 +165,28 @@ export default class Display {
             x2: 0,
             y2: 0
         }];
+        this._threading = true;
+        this._primaryChannel = null;
+        this._portRelayWorker = null;      // SharedWorker instance (primary only)
+        this._encodedFramePort = null;     // MessagePort from primary (secondary only)
+        this._localDecoder = null;         // VideoDecoder on secondary
+        this._localDecoderCodec = null;
+        this._localDecoderW = 0;
+        this._localDecoderH = 0;
+        this._localDecoderStreamMode = null;
+        this._localDecoderMeta = new Map(); // timestamp → {x, y, width, height, frameId}
+        this._localDecoderTs = 0;
+        this._rfb = rfb;
 
-        //optional offscreen canvas
-        this._enableCanvasBuffer = false;
-        this._backbuffer = document.createElement('canvas');
-        this._drawCtx = this._backbuffer.getContext('2d');
         this._damageBounds = { left: 0, top: 0, right: this._backbuffer.width, bottom: this._backbuffer.height };
 
         // ===== EVENT HANDLERS =====
 
         this.onflush = () => {  }; // A flush request has finished
 
+        this._broadcastChannel = new BroadcastChannel(`channel_${this.screenID}`);
         if (!this._isPrimaryDisplay) {
-            this._screens[0].channel = new BroadcastChannel(`screen_${this._screenID}_channel`);
-            this._screens[0].channel.addEventListener('message', this._handleSecondaryDisplayMessage.bind(this));
+            this._broadcastChannel.addEventListener('message', this._handleSecondaryDisplayMessage.bind(this));
         }
 
         Log.Debug("<< Display.constructor");
@@ -132,27 +194,9 @@ export default class Display {
 
     // ===== PROPERTIES =====
 
-    get enableCanvasBuffer() { return this._enableCanvasBuffer; }
+    get enableCanvasBuffer() { return this._renderer.enableCanvasBuffer; }
     set enableCanvasBuffer(value) {
-        if (value === this._enableCanvasBuffer) { return; }
-
-        this._enableCanvasBuffer = value;
-
-        
-        if (value && this._target)
-        {
-            //copy current visible canvas to backbuffer
-            let saveImg = this._targetCtx.getImageData(0, 0, this._target.width, this._target.height);
-            this._drawCtx.putImageData(saveImg, 0, 0);
-
-            if (this._transparentOverlayImg) {
-                this.drawImage(this._transparentOverlayImg, this._transparentOverlayRect.x, this._transparentOverlayRect.y, this._transparentOverlayRect.width, this._transparentOverlayRect.height, true);
-            }
-        } else if (!value && this._target) {
-            //copy backbuffer to canvas to clear any overlays
-            let saveImg = this._targetCtx.getImageData(0, 0, this._target.width, this._target.height);
-            this._drawCtx.putImageData(saveImg, 0, 0);
-        }
+        this._renderer.enableCanvasBuffer = value;
     }
 
     get screens() { return this._screens; }
@@ -163,18 +207,23 @@ export default class Display {
         if (!this._isPrimaryDisplay && this._screens[0].screenIndex == 0) {
             return -1;
         }
-        return this._screens[0].screenIndex; 
+        return this._screens[0].screenIndex;
     }
-    
-    get antiAliasing() { return this._antiAliasing; }
+
+    get antiAliasing() { return this._renderer.antiAliasing; }
     set antiAliasing(value) {
-        this._antiAliasing = value;
+        this._renderer.antiAliasing = value;
         this._rescale(this._scale);
     }
 
     get scale() { return this._scale; }
     set scale(scale) {
         this._rescale(scale);
+    }
+
+    get threading() { return this._threading; }
+    set threading(bool) {
+        this._threading = bool;
     }
 
     get clipViewport() { return this._clipViewport; }
@@ -202,6 +251,7 @@ export default class Display {
     }
 
     get fps() { return this._fps; }
+    get droppedFps() { return this._droppedFramesRate; }
 
     // ===== PUBLIC METHODS =====
 
@@ -210,7 +260,7 @@ export default class Display {
     */
     getClientRelativeCoordinates(x, y) {
         for (let i = 0; i < this._screens.length; i++) {
-            if ( 
+            if (
                 (x >= this._screens[i].x && x <= this._screens[i].x + this._screens[i].serverWidth) &&
                 (y >= this._screens[i].y && y <= this._screens[i].y + this._screens[i].serverHeight)
                 )
@@ -224,7 +274,7 @@ export default class Display {
         }
     }
 
-    /* 
+    /*
     Returns coordinates that are server relative when multiple monitors are in use
     */
     getServerRelativeCoordinates(screenIndex, x, y) {
@@ -236,7 +286,7 @@ export default class Display {
         return [x, y];
     }
 
-    getScreenSize(resolutionQuality, max_width, max_height, hiDpi, disableLimit, disableScaling) {
+    getScreenSize(resolutionQuality, max_width, max_height, hiDpi, disableLimit, disableScaling, streamMode) {
         let data = {
             screens: null,
             serverWidth: 0,
@@ -245,12 +295,15 @@ export default class Display {
 
         let i = 0;
 
+
+        //getting parent node size with sub-pixel precision
+        let parentNodeSize = this._target.parentNode.getBoundingClientRect();
         //recalculate primary display container size
-        this._screens[i].containerHeight = this._target.parentNode.offsetHeight;
-        this._screens[i].containerWidth = this._target.parentNode.offsetWidth;
+        this._screens[i].containerHeight = Math.floor(parentNodeSize.height / 2) * 2;
+        this._screens[i].containerWidth = Math.floor(parentNodeSize.width / 2) * 2;
         this._screens[i].pixelRatio = window.devicePixelRatio;
-        this._screens[i].width = this._target.parentNode.offsetWidth;
-        this._screens[i].height = this._target.parentNode.offsetHeight;
+        this._screens[i].width = this._screens[i].containerWidth;
+        this._screens[i].height = this._screens[i].containerHeight;
 
         //calculate server-side and client-side resolution of each screen
         let width = max_width || this._screens[i].containerWidth;
@@ -263,18 +316,18 @@ export default class Display {
             (
                 disableScaling ||
                 (this._screens[i].serverReportedWidth !== this._screens[i].serverWidth || this._screens[i].serverReportedHeight !== this._screens[i].serverHeight)
-            ) && 
+            ) &&
             (!max_width && !max_height)
         ) {
             height = this._screens[i].serverReportedHeight;
             width = this._screens[i].serverReportedWidth;
         }
-        else if (width > 1280 && !disableLimit && resolutionQuality == 1) {
+        else if (width > 1280 && !disableLimit && resolutionQuality == 1 && streamMode == encodings.pseudoEncodingStreamingModeJpegWebp) {
             height = Math.floor(1280 * (height/width)); //keeping the aspect ratio of original resolution, shrink y to match x
             width = 1280;
         }
         //hard coded 720p
-        else if (resolutionQuality == 0 && !disableLimit) {
+        else if (resolutionQuality == 0 && !disableLimit && streamMode == encodings.pseudoEncodingStreamingModeJpegWebp) {
             width = 1280;
             height = 720;
         }
@@ -285,8 +338,8 @@ export default class Display {
             scale = 1 / this._screens[i].pixelRatio;
         }
         //physically small device with high DPI
-        else if (this._antiAliasing === 0 && this._screens[i].pixelRatio > 1 && width < 1000 & width > 0) {
-            Log.Info('Device Pixel ratio: ' + this._screens[i].pixelRatio + ' Reported Resolution: ' + width + 'x' + height); 
+        else if (this._renderer?.antiAliasing === 0 && this._screens[i].pixelRatio > 1 && width < 1000 & width > 0) {
+            Log.Info('Device Pixel ratio: ' + this._screens[i].pixelRatio + ' Reported Resolution: ' + width + 'x' + height);
             let targetDevicePixelRatio = 1.5;
             if (this._screens[i].pixelRatio > 2) { targetDevicePixelRatio = 2; }
             let scaledWidth = (width * this._screens[i].pixelRatio) * (1 / targetDevicePixelRatio);
@@ -296,10 +349,10 @@ export default class Display {
             scale = 1 / scaleRatio;
             Log.Info('Small device with hDPI screen detected, auto scaling at ' + scaleRatio + ' to ' + width + 'x' + height);
         }
-        
+
         let clientServerRatioH = this._screens[i].containerHeight / height;
         let clientServerRatioW = this._screens[i].containerWidth / width;
-        
+
         this._screens[i].height = Math.floor(height * clientServerRatioH);
         this._screens[i].width = Math.floor(width * clientServerRatioW);
         this._screens[i].serverWidth = width;
@@ -355,12 +408,12 @@ export default class Display {
         return changes;
     }
 
-    addScreen(screenID, width, height, pixelRatio, containerHeight, containerWidth, scale, serverWidth, serverHeight, x, y) {
+    addScreen(screenID, width, height, pixelRatio, containerHeight, containerWidth, scale, serverWidth, serverHeight, x, y, windowId) {
         if (!this._isPrimaryDisplay) {
             throw new Error("Cannot add a screen to a secondary display.");
         }
         else if (containerHeight === 0 || containerWidth === 0 || pixelRatio === 0) {
-            Log.Warn("Invalid screen configuration."); 
+            Log.Warn("Invalid screen configuration.");
         }
         let screenIdx = -1;
 
@@ -374,8 +427,8 @@ export default class Display {
         if (screenIdx > 0) {
             //existing screen, update
             const existing_screen = this._screens[screenIdx];
-            if (existing_screen.serverHeight !== serverHeight || existing_screen.serverWidth !== serverWidth || existing_screen.width !== width || existing_screen.height !== height 
-                || existing_screen.containerHeight !== containerHeight || existing_screen.containerWidth !== containerWidth || existing_screen.scale !== scale || existing_screen.pixelRatio !== pixelRatio || 
+            if (existing_screen.serverHeight !== serverHeight || existing_screen.serverWidth !== serverWidth || existing_screen.width !== width || existing_screen.height !== height
+                || existing_screen.containerHeight !== containerHeight || existing_screen.containerWidth !== containerWidth || existing_screen.scale !== scale || existing_screen.pixelRatio !== pixelRatio ||
                 existing_screen.x !== x || existing_screen.y !== y) {
                 existing_screen.width = width;
                 existing_screen.height = height;
@@ -397,7 +450,7 @@ export default class Display {
                 x = Math.max(x, this._screens[i].x + this._screens[i].serverWidth);
             }
 
-            var new_screen = {
+            const new_screen = {
                 screenID: screenID,
                 screenIndex: this.screens.length,
                 width: width, //client
@@ -411,17 +464,39 @@ export default class Display {
                 pixelRatio: pixelRatio,
                 containerHeight: containerHeight,
                 containerWidth: containerWidth,
-                channel: null,
+                channel: new BroadcastChannel(`channel_${screenID}`),
+                encodedFramePort: null,
                 scale: scale,
                 x2: x + serverWidth,
                 y2: serverHeight
-            }
-
-            new_screen.channel = new BroadcastChannel(`screen_${screenID}_channel`);
-            //new_screen.channel.message = this._handleSecondaryDisplayMessage().bind(this);
+            };
 
             this._screens.push(new_screen);
-            new_screen.channel.postMessage({ eventType: "registered", screenIndex: new_screen.screenIndex });
+            if (new_screen.channel) {
+                this._registeredWindows.set(screenID, windowId);
+                new_screen.channel.postMessage({eventType: "registered", screenIndex: new_screen.screenIndex});
+            } else
+                Log.Debug(`Channel not found for screenId ${screenID}`);
+
+            // Set up SharedWorker port relay for encoded-frame fast path
+            if (!this._portRelayWorker) {
+                this._portRelayWorker = new SharedWorker(
+                    new URL('../app/port-relay-worker.js', import.meta.url));
+                this._portRelayWorker.port.start();
+                this._portRelayWorker.port.onmessage = (e) => {
+                    if (e.data.type === 'port') {
+                        const screen = this._screens[e.data.screenIndex];
+                        if (screen) {
+                            screen.encodedFramePort = e.data.port;
+                            Log.Info(`[PRIMARY] encodedFramePort established for screen ${e.data.screenIndex}`);
+                        }
+                    }
+                };
+            }
+            this._portRelayWorker.port.postMessage({
+                type: 'primary_ready',
+                screenIndex: new_screen.screenIndex
+            });
 
             return new_screen.screenIndex;
         }
@@ -436,7 +511,11 @@ export default class Display {
                 if (this._screens[i].screenID == screenID) {
                     //flush all rects on target screen
                     this._flushRectsScreen(i);
-                    this._screens[i].channel.close();
+                    const windowId = this._registeredWindows.get(screenID);
+                    if (windowId) {
+                        this._registeredWindows.delete(screenID);
+                        this._displayWindows.delete(windowId);
+                    }
                     this._screens.splice(i, 1);
                     removed = true;
                     break;
@@ -446,7 +525,8 @@ export default class Display {
             for (let i=1; i<this._screens.length; i++) {
                 this.screens[i].screenIndex = i;
                 if (i > 0) {
-                    this._screens[i].channel.postMessage({ eventType: "registered", screenIndex: i });
+                    this._screens[i].channel?.postMessage({ eventType: "registered", screenIndex: i });
+                    this._portRelayWorker?.port.postMessage({ type: 'primary_ready', screenIndex: i });
                 }
             }
             return removed;
@@ -511,23 +591,10 @@ export default class Display {
             height = this._fbHeight;
         }
 
-        const vp = this._screens[0];
-        const canvas = this._target;
-        if (canvas.width !== width || canvas.height !== height) {
-            let saveImg = null;
-            if (canvas.width > 0 && canvas.height > 0) {
-                saveImg = this._targetCtx.getImageData(0, 0, canvas.width, canvas.height);
-            }
-
+        if (this._renderer?.viewportChangeSize(width, height)) {
+            const vp = this._screens[0];
             vp.serverWidth = width;
             vp.serverHeight = height;
-
-            canvas.width = width;
-            canvas.height = height;
-
-            if (saveImg) {
-                this._targetCtx.putImageData(saveImg, 0, 0);
-            }
 
             // The position might need to be updated if we've grown
             this.viewportChangePos(0, 0);
@@ -552,40 +619,10 @@ export default class Display {
     }
 
     resize(width, height) {
-        this._prevDrawStyle = "";
-
         this._fbWidth = width;
         this._fbHeight = height;
 
-        let canvas = this._backbuffer;
-        if (canvas == undefined) { return; }
-        
-        if (this._screens.length > 0) {
-            width = this._screens[0].serverWidth;
-            height = this._screens[0].serverHeight;
-        }
-
-        if (canvas.width !== width || canvas.height !== height) {
-            // We have to save the canvas data since changing the size will clear it
-            let saveImg = null;
-            if (canvas.width > 0 && canvas.height > 0) {
-                saveImg = this._drawCtx.getImageData(0, 0, canvas.width, canvas.height);
-            }
-
-            if (canvas.width !== width) {
-                canvas.width = width;
-
-            }
-            if (canvas.height !== height) {
-                canvas.height = height;
-            }
-
-            if (saveImg) {
-                this._drawCtx.putImageData(saveImg, 0, 0);
-            }
-        }
-
-        
+        this._renderer?.resize(width, height, this._screens);
 
         // Readjust the viewport as it may be incorrectly sized
         // and positioned
@@ -630,21 +667,38 @@ export default class Display {
         if (onflush_message)
             this.onflush();
     }
-    
+
     /*
     * Clears the buffer of anything that has not yet been displayed.
     * This must be called when switching between transit modes tcp/udp
     */
     clear() {
-       this._clearAsyncQueue();
+        this._clearAsyncQueue();
     }
 
     /*
     * Cleans up resources, should be called on a disconnect
     */
     dispose() {
-        clearInterval(this._frameStatsInterval);
+        this._disposed = true;
+        this._broadcastChannel?.close();
+        this._portRelayWorker?.port.close();
+        this._encodedFramePort?.close();
+        if (this._localDecoder?.state !== "closed") this._localDecoder?.close();
+        for (const screen of this._screens) {
+            screen.channel?.close();
+            screen.encodedFramePort?.close();
+        }
+        if (this._frameStatsInterval) {
+            clearInterval(this._frameStatsInterval);
+            this._frameStatsInterval = null;
+        }
         this.clear();
+
+        if (this._renderer) {
+            this._renderer.dispose();
+            this._renderer = null;
+        }
     }
 
     fillRect(x, y, width, height, color, frame_id, fromQueue) {
@@ -661,12 +715,7 @@ export default class Display {
             this._processRectScreens(rect);
             this._asyncRenderQPush(rect);
         } else {
-            this._setFillColor(color);
-            if (this._enableCanvasBuffer) {
-                this._drawCtx.fillRect(x, y, width, height);
-            } else {
-                this._targetCtx.fillRect(x, y, width, height);
-            }
+            this._renderer?.fillRect(x, y, width, height, color);
         }
     }
 
@@ -685,25 +734,17 @@ export default class Display {
             this._processRectScreens(rect);
             this._asyncRenderQPush(rect);
         } else {
-            let targetCtx = ((this._enableCanvasBuffer) ? this._drawCtx : this._targetCtx);
-            let sourceCvs = ((this._enableCanvasBuffer) ? this._backbuffer : this._target);
-
-            // Due to this bug among others [1] we need to disable the image-smoothing to
-            // avoid getting a blur effect when copying data.
-            //
-            // 1. https://bugzilla.mozilla.org/show_bug.cgi?id=1194719
-            //
-            // We need to set these every time since all properties are reset
-            // when the the size is changed
-            targetCtx.mozImageSmoothingEnabled = false;
-            targetCtx.webkitImageSmoothingEnabled = false;
-            targetCtx.msImageSmoothingEnabled = false;
-            targetCtx.imageSmoothingEnabled = false;
-
-            targetCtx.drawImage(sourceCvs,
-                                    oldX, oldY, w, h,
-                                    newX, newY, w, h);
+            this._renderer?.copyImage(oldX, oldY, newX, newY, w, h);
         }
+    }
+
+    _handleVidChunk(data, chunk) {
+        let rect = data[0];
+        let that = data[1];
+        let imageDecoder = data[2];
+        imageDecoder.close();
+        rect.img = chunk.image;
+        that._asyncRenderQPush(rect);
     }
 
     imageRect(x, y, width, height, mime, arr, frame_id) {
@@ -711,31 +752,108 @@ export default class Display {
         if ((width === 0) || (height === 0)) {
             return;
         }
-        
+
         let rect = {
-            'type': 'img',
-            'img': null,
-            'x': x,
-            'y': y,
-            'width': width,
-            'height': height,
-            'frame_id': frame_id
-        }
+                'type': 'img',
+                'img': null,
+                'x': x,
+                'y': y,
+                'width': width,
+                'height': height,
+                'frame_id': frame_id,
+                'mime': mime
+        };
+
         this._processRectScreens(rect);
 
-        if (rect.inPrimary) {
-            const img = new Image();
-            img.src = "data: " + mime + ";base64," + Base64.encode(arr);
-            rect.img = img;
+        // Use threaded image decoder
+        if (!rect.inSecondary) {
+            if ((typeof ImageDecoder !== 'undefined') && (this._threading)) {
+                let imageDecoder = new ImageDecoder({data: arr, type: mime});
+                rect.type = 'vid'
+                imageDecoder.decode().then(this._handleVidChunk.bind(null, [rect, this, imageDecoder]));
+            } else {
+                const blob = new Blob([arr], {type: mime});
+
+                createImageBitmap(blob).then((bitmapImg) => {
+                    rect.type = 'bitmap';
+                    rect.img = bitmapImg;
+                    this._asyncRenderQPush(rect);
+                });
+            }
         } else {
-            rect.type = "_img";
+            let src = "data: " + mime + ";base64," + Base64.encode(arr);
+
+            if (rect.inPrimary) {
+                const img = new Image();
+                rect.img = img;
+                rect.type = 'img';
+                img.src = src;
+            } else {
+                rect.type = "_img";
+            }
+
+            if (rect.inSecondary) {
+                rect.src = src;
+            }
+
+            this._asyncRenderQPush(rect);
         }
-        if (rect.inSecondary) {
-            rect.mime = mime;
-            rect.src = "data: " + mime + ";base64," + Base64.encode(arr);
+    }
+
+    // Push a placeholder rect for a secondary video frame that was already forwarded
+    // via encodedFramePort. The rect has a null frame so _pushAsyncFrame skips rendering,
+    // but it still counts toward the frame's expected rect count so the primary doesn't stall.
+    enqueueVideoFrameRect(screenId, frameId, x, y, width, height) {
+        const rect = {
+            type: 'video_frame',
+            screenId,
+            frame: null,
+            x, y, width, height,
+            frame_id: frameId,
+        };
+        if (screenId < this._screens.length) {
+            this._processRectScreens(rect);
+            this._asyncRenderQPush(rect);
+        }
+    }
+
+    videoFrameRect(screenId, frame, frame_id, x, y, width, height) {
+        const startTime = perfLogger.start('videoFrameRender');
+
+        if (frame.displayWidth === 0 || frame.displayHeight === 0 || frame.codedWidth === 0 || frame.codedHeight === 0) {
+            frame.close();
+            perfLogger.end('videoFrameRender', startTime);
+            return false;
         }
 
-        this._asyncRenderQPush(rect);
+        const rect = {
+            type: 'video_frame',
+            screenId,
+            frame,
+            x,
+            y,
+            width,
+            height,
+            frame_id
+        };
+        // TODO: REMoVE
+        // this.drawVideoFrame(frame, x, y, width, height);
+
+        if (rect.screenId < this._screens.length) {
+            const routeStart = perfLogger.start('screenRouting');
+            this._processRectScreens(rect);
+            perfLogger.end('screenRouting', routeStart);
+
+            const queueStart = perfLogger.start('asyncQueuePush');
+            this._asyncRenderQPush(rect);
+            perfLogger.end('asyncQueuePush', queueStart);
+        } else {
+            frame.close();
+            Log.Debug(`ScreenId ${screenId} not found in display list`);
+        }
+
+        perfLogger.end('videoFrameRender', startTime);
     }
 
     transparentRect(x, y, width, height, img, frame_id, hashId) {
@@ -744,7 +862,7 @@ export default class Display {
             return;
         }
 
-        var rect = {
+        const rect = {
             'type': 'transparent',
             'img': null,
             'x': x,
@@ -754,18 +872,17 @@ export default class Display {
             'frame_id': frame_id,
             'arr': img,
             'hash_id': hashId
-        }
+        };
         this._processRectScreens(rect);
 
         if (rect.inPrimary) {
             let imageBmpPromise = createImageBitmap(img);
             imageBmpPromise.then( function(bitmap) {
-                this._transparentOverlayImg = bitmap;
-                this.enableCanvasBuffer = true;
+                this._renderer.transparentOverlayImg = bitmap;
             }.bind(this) );
         }
 
-        this._transparentOverlayRect = rect;
+        this._renderer.transparentOverlayRect = rect;
         this._asyncRenderQPush(rect);
     }
 
@@ -785,11 +902,17 @@ export default class Display {
 
     blitImage(x, y, width, height, arr, offset, frame_id, fromQueue) {
         if (!fromQueue) {
+            let buf;
+            if (!ArrayBuffer.isView(arr)) {
+                buf = arr;
+            } else {
+                buf = arr.buffer;
+            }
             // NB(directxman12): it's technically more performant here to use preallocated arrays,
             // but it's a lot of extra work for not a lot of payoff -- if we're using the render queue,
             // this probably isn't getting called *nearly* as much
             const newArr = new Uint8Array(width * height * 4);
-            newArr.set(new Uint8Array(arr.buffer, 0, newArr.length));
+            newArr.set(new Uint8Array(buf, 0, newArr.length));
             let rect = {
                 'type': 'blit',
                 'data': newArr,
@@ -802,18 +925,7 @@ export default class Display {
             this._processRectScreens(rect);
             this._asyncRenderQPush(rect);
         } else {
-            // NB(directxman12): arr must be an Type Array view
-            let data = new Uint8ClampedArray(arr.buffer,
-                                             arr.byteOffset + offset,
-                                             width * height * 4);
-            let img = new ImageData(data, width, height);
-            if (this._enableCanvasBuffer) {
-                this._drawCtx.putImageData(img, x, y);
-            } else {
-                this._targetCtx.putImageData(img, x, y);
-                
-            }
-            
+            this._renderer?.blitImage(x, y, width, height, arr, offset);
         }
     }
 
@@ -831,24 +943,50 @@ export default class Display {
             this._processRectScreens(rect);
             this._asyncRenderQPush(rect);
         } else {
-            if (this._enableCanvasBuffer) {
-                this._drawCtx.putImageData(arr, x, y);
-            } else {
-                this._targetCtx.putImageData(arr, x, y);
-            }
+            this._renderer?.blitQoi(arr, x, y);
         }
     }
 
-    drawImage(img, x, y, w, h, overlay=false) {
+    drawImage(img, x, y, w, h) {
         try {
-            let targetCtx = ((this._enableCanvasBuffer && !overlay) ? this._drawCtx : this._targetCtx);
-            if (img.width != w || img.height != h) {
-                targetCtx.drawImage(img, x, y, w, h);
-            } else {
-                targetCtx.drawImage(img, x, y);
-            }
+            this._renderer?.drawImage(img, x, y, w, h);
         } catch (error) {
-            Log.Error('Invalid image recieved.'); //KASM-2090
+            Log.Error('Invalid image received.'); //KASM-2090
+        }
+    }
+
+    drawVideoFrame(videoFrame, x, y, width, height) {
+        try {
+            this._renderer?.drawVideoFrame(videoFrame, x, y, width, height);
+        } catch (error) {
+            Log.Error('Invalid video frame received. ', error);
+        }
+    }
+
+    putImage(img, x, y) {
+        try {
+            this._renderer?.putImage(img, x, y);
+            img = null;
+        } catch (error) {
+            Log.Error('Invalid image received.');
+            img = null;
+        }
+    }
+
+    clearRect(x, y, width, height, offset, frame_id, fromQueue) {
+        if (!fromQueue) {
+            let rect = {
+                'type': 'clear',
+                'x': x,
+                'y': y,
+                'width': width,
+                'height': height,
+                'frame_id': frame_id
+            }
+            this._processRectScreens(rect);
+            this._asyncRenderQPush(rect);
+        } else {
+            this._renderer?.clearRect(x, y, width, height);
         }
     }
 
@@ -873,65 +1011,73 @@ export default class Display {
     }
 
     // ===== PRIVATE METHODS =====
-
-    _writeCtxBuffer() {
-    	//TODO: KASM-5450 Damage tracking with transparent rect overlay support
-        if (this._backbuffer.width > 0) {
-            this._targetCtx.drawImage(this._backbuffer, 0, 0);
-        }
-    }
-
     _handleSecondaryDisplayMessage(event) {
-        if (!this._isPrimaryDisplay && event.data) {
-            switch (event.data.eventType) {
-                case 'rect':
-                    let rect = event.data.rect;
-                    //overwrite screen locations when received on the secondary display
-                    rect.screenLocations = [ rect.screenLocations[event.data.screenLocationIndex] ]
-                    rect.screenLocations[0].screenIndex = 0;
-                    switch (rect.type) {
-                        case 'img':
-                        case '_img':
-                            rect.img = new Image();
-                            rect.img.src = rect.src;
-                            rect.type = 'img';
-                            break;
-                        case 'transparent':
-                            let imageBmpPromise = createImageBitmap(rect.arr);
-                            imageBmpPromise.then( function(img) {
-                                this._transparentOverlayImg = img;
-                                if (!this.enableCanvasBuffer) {
-                                    this._enableCanvasBuffer = true;
-                                }
-                            }.bind(this) );
-                            this._transparentOverlayRect = rect;
-                            break;
-                    }
-                    this._syncFrameQueue.push(rect);
+        if (this._isPrimaryDisplay || !event.data)
+            return;
 
-                    //if the secondary display is not in focus, the browser may not call requestAnimationFrame, thus we need to limit our buffer
-                    if (this._syncFrameQueue.length > 5000) {
-                        this._syncFrameQueue.shift();
-                        this._droppedRects++;
-                    }
-                    break;
-                case 'frameComplete':
-                        window.requestAnimationFrame( () => { this._pushSyncRects(); });
+        switch (event.data.eventType) {
+            case 'rect':
+                let rect = event.data.rect;
+                //overwrite screen locations when received on the secondary display
+                rect.screenLocations = [rect.screenLocations[event.data.screenLocationIndex]]
+                rect.screenLocations[0].screenIndex = 0;
+                switch (rect.type) {
+                    case 'img':
+                    case '_img':
+                        rect.img = new Image();
+                        rect.img.src = rect.src;
+                        rect.type = 'img';
                         break;
-                case 'registered':
-                        if (!this._isPrimaryDisplay) {
-                            this._screens[0].screenIndex = event.data.screenIndex;
-                            Log.Info(`Screen with index (${event.data.screenIndex}) successfully registered with the primary display.`);
-                            if (this._screens.length > 0) {
-                                this.resize(this._screens[0].serverWidth, this._screens[0].serverHeight);
-                            }
+                    case 'transparent':
+                        let imageBmpPromise = createImageBitmap(rect.arr);
+                        imageBmpPromise.then(function (img) {
+                            this._renderer.transparentOverlayImg = img;
+                        }.bind(this));
+                        this._renderer.transparentOverlayRect = rect;
+                        break;
+                }
+                this._syncFrameQueue.push(rect);
+
+                //if the secondary display is not in focus, the browser may not call requestAnimationFrame, thus we need to limit our buffer
+                if (this._syncFrameQueue.length > 5000) {
+                    this._syncFrameQueue.shift();
+                    this._droppedRects++;
+                }
+                break;
+            case 'frameComplete':
+                window.requestAnimationFrame(() => {
+                    this._pushSyncRects();
+                });
+                break;
+            case 'registered':
+                if (!this._isPrimaryDisplay) {
+                    const screenIndex = event.data.screenIndex;
+                    this._screens[0].screenIndex = screenIndex;
+                    Log.Info(`Screen with index (${screenIndex}) successfully registered with the primary display.`);
+                    if (this._screens.length > 0) {
+                        this.resize(this._screens[0].serverWidth, this._screens[0].serverHeight);
+                    }
+                    // Connect to SharedWorker to receive direct MessagePort from primary
+                    const relayWorker = new SharedWorker(
+                        new URL('../app/port-relay-worker.js', import.meta.url));
+                    relayWorker.port.start();
+                    relayWorker.port.onmessage = (e) => {
+                        if (e.data.type === 'port') {
+                            this._encodedFramePort = e.data.port;
+                            this._encodedFramePort.start();
+                            this._encodedFramePort.onmessage = this._handleEncodedFrame.bind(this);
+                            Log.Info(`[SECONDARY] encodedFramePort established`);
                         }
-                    break;
-            }
+                    };
+                    relayWorker.port.postMessage({type: 'secondary_ready', screenIndex});
+                }
+                break;
+
         }
     }
 
     _pushSyncRects() {
+        if (this._disposed) return;
         let drawRectCnt = 0;
         whileLoop:
         while (this._syncFrameQueue.length > 0) {
@@ -962,6 +1108,17 @@ export default class Display {
                         }
                     }
                     break;
+                case 'vid':
+                    this.drawImage(a.img, pos.x, pos.y, a.width, a.height);
+                    a.img.close();
+                    break;
+                case 'bitmap':
+                    this.drawImage(a.img, pos.x, pos.y, a.width, a.height);
+                    a.img.close();
+                    break;
+                case 'video_frame':
+                    this.drawVideoFrame(a.frame, pos.x, pos.y, a.width, a.height);
+                    break;
                 default:
                     this._syncFrameQueue.shift();
                     continue;
@@ -970,11 +1127,9 @@ export default class Display {
             this._syncFrameQueue.shift();
         }
 
-        if (this._enableCanvasBuffer && drawRectCnt > 0) {
-            this._writeCtxBuffer();
-            if (this._transparentOverlayImg) {
-                this.drawImage(this._transparentOverlayImg, this._transparentOverlayRect.x, this._transparentOverlayRect.y, this._transparentOverlayRect.width, this._transparentOverlayRect.height, true);
-            }
+        if (this._renderer?.enableCanvasBuffer && drawRectCnt > 0) {
+            this._renderer?._writeCtxBuffer();
+            this._renderer?.drawTransparentOverlayImg()
         }
 
         if (this._syncFrameQueue.length > 0) {
@@ -1001,6 +1156,11 @@ export default class Display {
     Process incoming rects into a frame buffer, assume rects are out of order due to either UDP or parallel processing of decoding
     */
     _asyncRenderQPush(rect) {
+        if (this._disposed) {
+            rect.frame?.close();
+            rect.img?.close?.();
+            return;
+        }
         let frameIx = -1;
         let oldestFrameID = Number.MAX_SAFE_INTEGER;
         let newestFrameID = 0;
@@ -1035,7 +1195,7 @@ export default class Display {
                 this._asyncFrameQueue[frameIx][1] += rect.rect_cnt;
                 if (rect.rect_cnt == 0) {
                     Log.Warn("Invalid rect count");
-                }  
+                }
             }
 
             if (this._asyncFrameQueue[frameIx][1] > 0 && this._asyncFrameQueue[frameIx][2].length >= this._asyncFrameQueue[frameIx][1]) {
@@ -1046,7 +1206,15 @@ export default class Display {
             if (rect.frame_id < oldestFrameID) {
                 //rect is older than any frame in the queue, drop it
                 this._droppedRects++;
-                if (rect.type == "flip") { this._lateFlipRect++; }
+                switch (rect.type) {
+                    case 'video_frame':
+                        rect.frame?.close();
+                        break;
+                    case 'flip':
+                        this._lateFlipRect++;
+                        break;
+                }
+
                 return;
             } else if (rect.frame_id > newestFrameID) {
                 //frame is newer than any frame in the queue, drop old frame
@@ -1057,22 +1225,37 @@ export default class Display {
                     this._forcedFrameCnt++;
                 } else {
                     Log.Warn("Old frame dropped");
+
+                    // Close VideoFrames in the frame being dropped
+                    const droppedFrame = this._asyncFrameQueue[0];
+                    for (const droppedRect of droppedFrame[2]) {
+                        if (droppedRect.type === 'video_frame') {
+                            droppedRect.frame?.close();
+                        }
+                    }
+
                     this._asyncFrameQueue.shift();
                     this._droppedFrames += (rect.frame_id - newestFrameID);
                 }
-                
+
                 let rect_cnt = ((rect.type == "flip") ? rect.rect_cnt : 0);
                 this._asyncFrameQueue.push([ rect.frame_id, rect_cnt, [ rect ], (rect_cnt == 1), 0, 0 ]);
-                
+
             }
         }
-        
     }
 
     /*
     Clear the async frame buffer
     */
     _clearAsyncQueue() {
+        // Close all VideoFrames in the queue before dropping
+        for (const frame of this._asyncFrameQueue) {
+            for (const rect of frame[2])
+                if (rect.type === 'video_frame')
+                    rect.frame?.close();
+        }
+
         this._droppedFrames += this._asyncFrameQueue.length;
 
         this._asyncFrameQueue = [];
@@ -1101,7 +1284,7 @@ export default class Display {
                     Log.Warn("Frame has more rects than the reported rect_cnt.");
                 }
             }
-            while (currentFrameRectIx < this._asyncFrameQueue[frameIx][2].length) {   
+            while (currentFrameRectIx < this._asyncFrameQueue[frameIx][2].length) {
                 if (this._asyncFrameQueue[frameIx][2][currentFrameRectIx].type == 'img') {
                     if (this._asyncFrameQueue[frameIx][2][currentFrameRectIx].img && !this._asyncFrameQueue[frameIx][2][currentFrameRectIx].img.complete) {
                         this._asyncFrameQueue[frameIx][2][currentFrameRectIx].type = 'skip';
@@ -1136,7 +1319,13 @@ export default class Display {
     Push the oldest frame in the buffer to the canvas if it is marked ready
     */
     _pushAsyncFrame(force=false) {
+        if (this._disposed) return;
+        // Record frame-to-frame interval
+        perfLogger.recordFrameInterval();
+
         if (this._asyncFrameQueue[0][3] || force) {
+            const frameStart = perfLogger.start('frameProcessing');
+
             let frame = this._asyncFrameQueue[0][2];
             let frameId = this._asyncFrameQueue.shift()[0];
             if (this._asyncFrameQueue.length < this._maxAsyncFrameQueue) {
@@ -1145,15 +1334,14 @@ export default class Display {
 
             let secondaryScreenRects = 0;
             let primaryScreenRects = 0;
-            
+
             //render the selected frame
             for (let i = 0; i < frame.length; i++) {
-                
                 const a = frame[i];
 
                 for (let sI = 0; sI < a.screenLocations.length; sI++) {
                     let screenLocation = a.screenLocations[sI];
-                    if (screenLocation.screenIndex == 0) {
+                    if (screenLocation.screenIndex === 0) {
                         switch (a.type) {
                             case 'copy':
                                 this.copyImage(screenLocation.oldX, screenLocation.oldY, screenLocation.x, screenLocation.y, a.width, a.height, a.frame_id, true);
@@ -1170,45 +1358,195 @@ export default class Display {
                             case 'img':
                                 this.drawImage(a.img, screenLocation.x, screenLocation.y, a.width, a.height);
                                 break;
+                            case 'clear':
+                                this.clearRect(screenLocation.x, screenLocation.y, a.width, a.height, 0, a.frame_id, true);
+                                break;
+                            case 'vid':
+                                this.drawImage(a.img, screenLocation.x, screenLocation.y, a.width, a.height);
+                                break;
+                            case 'bitmap':
+                                this.drawImage(a.img, screenLocation.x, screenLocation.y, a.width, a.height);
+                                break;
+                            case 'video_frame':
+                                this.drawVideoFrame(a.frame, screenLocation.x, screenLocation.y, a.width, a.height);
+                                break;
                             default:
                                 continue;
                         }
                         primaryScreenRects++;
                     } else {
+                        if (!this._screens[screenLocation.screenIndex]) {
+                            continue;
+                        }
+
                         switch (a.type) {
                             case 'dummy':
                             case 'transparent':
                             case 'flip':
                                 break;
+                            case 'vid':
+                                secondaryScreenRects++;
+                                if (this._screens[screenLocation.screenIndex]?.channel) {
+                                    this._screens[screenLocation.screenIndex].channel.postMessage({
+                                        eventType: 'rect',
+                                        rect: {
+                                           'type': 'vid',
+                                           'img': a.img,
+                                           'x': a.x,
+                                           'y': a.y,
+                                           'width': a.width,
+                                           'height': a.height,
+                                           'frame_id': a.frame_id,
+                                           'screenLocations': a.screenLocations
+                                        },
+                                        screenLocationIndex: sI
+                                    }, [a.img]);
+                                }
+                                break;
+                            case 'bitmap':
+                                secondaryScreenRects++;
+                                if (this._screens[screenLocation.screenIndex].channel) {
+                                    this._screens[screenLocation.screenIndex].channel.postMessage({
+                                        eventType: 'rect',
+                                        rect: {
+                                           'type': 'bitmap',
+                                           'img': a.img,
+                                           'x': a.x,
+                                           'y': a.y,
+                                           'width': a.width,
+                                           'height': a.height,
+                                           'frame_id': a.frame_id,
+                                           'screenLocations': a.screenLocations
+                                        },
+                                        screenLocationIndex: sI
+                                    }, [a.img]);
+                                }
+                                break;
+                            case 'blit':
+                                secondaryScreenRects++;
+                                let buf = a.data.buffer;
+                                if (this._screens[screenLocation.screenIndex].channel) {
+                                    this._screens[screenLocation.screenIndex].channel.postMessage({
+                                        eventType: 'rect',
+                                        rect: {
+                                           'type': 'blit',
+                                           'img': null,
+                                           'data': buf,
+                                           'x': a.x,
+                                           'y': a.y,
+                                           'width': a.width,
+                                           'height': a.height,
+                                           'frame_id': a.frame_id,
+                                           'screenLocations': a.screenLocations
+                                        },
+                                        screenLocationIndex: sI
+                                    }, [buf]);
+                                }
+                                break;
+                            case 'video_frame':
+                                secondaryScreenRects++;
+                                if (this._screens[screenLocation.screenIndex]?.encodedFramePort) {
+                                    // Encoded bytes already forwarded by KasmVideoDecoder; release frame.
+                                    if (a.frame)
+                                        a.frame.close();
+                                } else if (a.frame.format !== null) {
+                                    if (this._screens[screenLocation.screenIndex]?.channel) {
+                                        Log.Debug(`[PRIMARY] Converting VideoFrame to ImageBitmap`);
+                                        const bitmapStart = perfLogger.start('imageBitmapCreate');
+                                        createImageBitmap(a.frame).then((bitmap) => {
+                                            perfLogger.end('imageBitmapCreate', bitmapStart);
+
+                                            const broadcastStart = perfLogger.start('broadcastChannelSend');
+                                            this._screens[screenLocation.screenIndex].channel.postMessage({
+                                                eventType: 'rect',
+                                                rect: {
+                                                    type: 'bitmap',
+                                                    img: bitmap,
+                                                    x: a.x,
+                                                    y: a.y,
+                                                    width: a.width,
+                                                    height: a.height,
+                                                    frame_id: a.frame_id,
+                                                    screenLocations: a.screenLocations
+                                                },
+                                                screenLocationIndex: sI
+                                            }, [bitmap]); // Transfer ImageBitmap
+                                            perfLogger.end('broadcastChannelSend', broadcastStart);
+
+                                            Log.Debug(`[PRIMARY] ImageBitmap posted to secondary screen ${screenLocation.screenIndex}`);
+                                        }).catch((error) => {
+                                            perfLogger.end('imageBitmapCreate', bitmapStart);
+                                            Log.Error(`[PRIMARY] Failed to create ImageBitmap from VideoFrame: ${error.message}`);
+                                        });
+                                    } else {
+                                        a.frame.close();
+                                    }
+                                } else {
+                                    Log.Warn(`[PRIMARY] VideoFrame has null format, skipping`);
+                                }
+                                break;
+                            case 'img':
+                            case '_img':
+                                secondaryScreenRects++;
+                                if (this._screens[screenLocation.screenIndex].channel) {
+                                    this._screens[screenLocation.screenIndex].channel.postMessage({
+                                        eventType: 'rect',
+                                        rect: {
+                                           'type': 'img',
+                                           'img': null,
+                                           'x': a.x,
+                                           'y': a.y,
+                                           'width': a.width,
+                                           'height': a.height,
+                                           'frame_id': a.frame_id,
+                                           'screenLocations': a.screenLocations,
+                                           'src' : a.src
+                                        },
+                                        screenLocationIndex: sI
+                                    });
+                                }
+                                break;
                             default:
                                 secondaryScreenRects++;
-                                a.img = null;
-                                if (this._screens[screenLocation.screenIndex].channel) {
-                                    this._screens[screenLocation.screenIndex].channel.postMessage({ eventType: 'rect', rect: a, screenLocationIndex: sI });
+                                if (a instanceof HTMLImageElement || a?.img instanceof HTMLImageElement) {
+                                    Log.Warn("Wrong rect type: " + a.type);
+                                } else {
+                                    if (this._screens[screenLocation.screenIndex].channel) {
+                                        try {
+                                            this._screens[screenLocation.screenIndex].channel.postMessage({
+                                                eventType: 'rect',
+                                                rect: a,
+                                                screenLocationIndex: sI
+                                            });
+
+                                        } catch (e) {
+                                            Log.Error(`Failed to post rect: ${e.message}, rect type: ${a.type}`);
+                                        }
+                                    }
                                 }
                         }
                     }
                 }
             }
 
-            if (this._enableCanvasBuffer) {
-
+            if (this._renderer?.enableCanvasBuffer) {
                 if (primaryScreenRects > 0) {
-                    this._writeCtxBuffer();
+                    this._renderer?._writeCtxBuffer();
                 }
-                
-                if (this._transparentOverlayImg) { 
+
+                if (this._renderer?.transparentOverlayImg) {
                     if (primaryScreenRects > 0) {
-                        this.drawImage(this._transparentOverlayImg, this._transparentOverlayRect.x, this._transparentOverlayRect.y, this._transparentOverlayRect.width, this._transparentOverlayRect.height, true);
+                        this._renderer?.drawTransparentOverlayImg();
                     }
-                    if (secondaryScreenRects > 0 && this._lastTransparentRectId !== this._transparentOverlayRect.hash_id) {
-                        for (let sI = 1; sI < this._transparentOverlayRect.screenLocations.length; sI++) {
-                            if (this._screens[this._transparentOverlayRect.screenLocations[sI].screenIndex].channel) {
-                                this._screens[this._transparentOverlayRect.screenLocations[sI].screenIndex].channel.postMessage({ eventType: 'rect', rect: this._transparentOverlayRect, screenLocationIndex: sI });
+                    const transparentOverlayRect = this._renderer?.transparentOverlayRect;
+                    if (secondaryScreenRects > 0 && this._lastTransparentRectId !== transparentOverlayRect.hash_id) {
+                        for (let sI = 1; sI < transparentOverlayRect.screenLocations.length; sI++) {
+                            if (this._screens[transparentOverlayRect.screenLocations[sI].screenIndex].channel) {
+                                this._screens[transparentOverlayRect.screenLocations[sI].screenIndex].channel.postMessage({ eventType: 'rect', rect: transparentOverlayRect, screenLocationIndex: sI });
                             }
                         }
                     }
-                    this._lastTransparentRectId = this._transparentOverlayRect.hash_id;
+                    this._lastTransparentRectId = transparentOverlayRect.hash_id;
                 }
             }
 
@@ -1227,46 +1565,121 @@ export default class Display {
                 this.onflush();
             }
 
+            perfLogger.end('frameProcessing', frameStart);
+
             // if there is more data in queue, then keep checking
             if (this._asyncFrameQueue[0][2].length > 0) {
                 window.requestAnimationFrame( () => { this._pushAsyncFrame(); });
             }
-        } else if (this._asyncFrameQueue[0][1] > 0 && this._asyncFrameQueue[0][1] == this._asyncFrameQueue[0][2].length) {
+        } else if (this._asyncFrameQueue[0][1] > 0 && this._asyncFrameQueue[0][1] === this._asyncFrameQueue[0][2].length) {
             //how many times has _pushAsyncFrame been called when the frame had all rects but has not been drawn
             this._asyncFrameQueue[0][5] += 1;
             //force the frame to be drawn if it has been here too long
-            if (this._asyncFrameQueue[0][5] > 5) { 
+            if (this._asyncFrameQueue[0][5] > 5) {
                 this._pushAsyncFrame(true);
             }
         }
     }
 
-    _processRectScreens(rect) {
+    _configureLocalDecoder(codec, width, height, streamMode) {
+        this._localDecoder.configure({
+            codec,
+            displayAspectWidth: width,
+            displayAspectHeight: height,
+            optimizeForLatency: true,
+            // Chrome WebCodecs bug with NVENC h264
+            hardwareAcceleration: streamMode === encodings.pseudoEncodingStreamingModeAVCNVENC
+                ? 'prefer-software' : 'no-preference',
+        });
+    }
 
+    _handleEncodedFrame(e) {
+        const { codec, keyFrame, streamMode, data, x, y, width, height, frameId } = e.data;
+
+        // Reconfigure decoder on first use or when codec/dimensions/streaming mode change
+        if (!this._localDecoder || this._localDecoderCodec !== codec ||
+            this._localDecoderW !== width || this._localDecoderH !== height ||
+            (keyFrame && this._localDecoderStreamMode !== streamMode)) {
+            if (!keyFrame)
+                return;
+
+            if (this._localDecoder) {
+                this._localDecoder.close();
+                this._localDecoderMeta.clear();
+            }
+            this._localDecoder = new VideoDecoder({
+                output: (frame) => {
+                    const meta = this._localDecoderMeta.get(frame.timestamp);
+                    this._localDecoderMeta.delete(frame.timestamp);
+                    if (meta) {
+                        // drawVideoFrame delegates to the renderer which closes the frame internally.
+                        this.drawVideoFrame(frame, meta.x, meta.y, meta.width, meta.height);
+                        // Flush back-buffer to visible canvas if double-buffering is active.
+                        if (this._renderer?.enableCanvasBuffer) {
+                            this._renderer._writeCtxBuffer();
+                            this._renderer.drawTransparentOverlayImg();
+                        }
+                    } else {
+                        frame.close();
+                    }
+                },
+                error: (err) => {
+                    Log.Error('Secondary VideoDecoder error:', err);
+                    this._localDecoder = null;
+                }
+            });
+            this._localDecoderCodec = codec;
+            this._localDecoderW = width;
+            this._localDecoderH = height;
+            this._localDecoderStreamMode = streamMode;
+            this._configureLocalDecoder(codec, width, height, streamMode);
+        }
+
+        const ts = ++this._localDecoderTs;
+        this._localDecoderMeta.set(ts, { x, y, width, height, frameId });
+        this._localDecoder.decode(new EncodedVideoChunk({
+            type: keyFrame ? 'key' : 'delta',
+            data,
+            timestamp: ts,
+        }));
+    }
+
+    _processRectScreens(rect) {
         //find which screen this rect belongs to and adjust its x and y to be relative to the destination
         let indexes = [];
-        rect.inPrimary = false;
-        rect.inSecondary = false;
-        for (let i=0; i < this._screens.length; i++) {
-            let screen = this._screens[i];
+        if (rect.type === 'video_frame') {
+            const screen = this._screens[rect.screenId];
+            let screenPosition = {
+                x: 0 - (screen.x - rect.x), //rect.x - screen.x,
+                y: 0 - (screen.y - rect.y), //rect.y - screen.y,
+                screenIndex: rect.screenId
+            }
 
-            if (
-                !((rect.x > screen.x2 || screen.x > (rect.x + rect.width)) && (rect.y > screen.y2 || screen.y > (rect.y + rect.height)))
-            ) {
-                let screenPosition = { 
-                    x: 0 - (screen.x - rect.x), //rect.x - screen.x,
-                    y: 0 - (screen.y - rect.y), //rect.y - screen.y,
-                    screenIndex: i
-                }
-                if (rect.type === 'copy') {
-                    screenPosition.oldX = 0 - (screen.x - rect.oldX); //rect.oldX - screen.x;
-                    screenPosition.oldY = 0 - (screen.y - rect.oldY); //rect.oldY - screen.y;
-                }
-                indexes.push(screenPosition);
-                if (i == 0) {
-                    rect.inPrimary = true;
-                } else {
-                    rect.inSecondary = true;
+            indexes.push(screenPosition);
+        } else {
+            rect.inPrimary = false;
+            rect.inSecondary = false;
+            for (let i = 0; i < this._screens.length; i++) {
+                let screen = this._screens[i];
+
+                if (
+                    !((rect.x > screen.x2 || screen.x > (rect.x + rect.width)) && (rect.y > screen.y2 || screen.y > (rect.y + rect.height)))
+                ) {
+                    let screenPosition = {
+                        x: 0 - (screen.x - rect.x), //rect.x - screen.x,
+                        y: 0 - (screen.y - rect.y), //rect.y - screen.y,
+                        screenIndex: i
+                    }
+                    if (rect.type === 'copy') {
+                        screenPosition.oldX = 0 - (screen.x - rect.oldX); //rect.oldX - screen.x;
+                        screenPosition.oldY = 0 - (screen.y - rect.oldY); //rect.oldY - screen.y;
+                    }
+                    indexes.push(screenPosition);
+                    if (i === 0) {
+                        rect.inPrimary = true;
+                    } else {
+                        rect.inSecondary = true;
+                    }
                 }
             }
         }
@@ -1285,32 +1698,8 @@ export default class Display {
         const width = factor * vp.serverWidth + 'px';
         const height = factor * vp.serverHeight + 'px';
 
-        if ((this._target.style.width !== width) ||
-            (this._target.style.height !== height)) {
-            this._target.style.width = width;
-            this._target.style.height = height;
-        }
+        this._renderer?.rescale(factor, width, height, vp.serverWidth, vp.serverHeight, vp.width);
 
-        Log.Info('Pixel Ratio: ' + window.devicePixelRatio + ', VNC Scale: ' + factor + 'VNC Res: ' + vp.serverWidth + 'x' + vp.serverHeight);
-
-        var pixR = Math.abs(Math.ceil(window.devicePixelRatio));
-        var isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
-
-        if (this.antiAliasing === 2 || (this.antiAliasing === 0 && factor === 1 && this._target.style.imageRendering !== 'pixelated' && pixR === window.devicePixelRatio && vp.width > 0)) {
-            this._target.style.imageRendering = ((!isFirefox) ? 'pixelated' : 'crisp-edges' );
-            Log.Debug('Smoothing disabled');
-        } else if (this.antiAliasing === 1 || (this.antiAliasing === 0 && factor !== 1 && this._target.style.imageRendering !== 'auto')) {
-            this._target.style.imageRendering = 'auto'; //auto is really smooth (blurry) using trilinear of linear
-            Log.Debug('Smoothing enabled');
-        }
-    }
-
-    _setFillColor(color) {
-        const newStyle = 'rgb(' + color[0] + ',' + color[1] + ',' + color[2] + ')';
-        let targetCtx = ((this._enableCanvasBuffer) ? this._drawCtx : this._targetCtx);
-        if (newStyle !== this._prevDrawStyle) {
-            targetCtx.fillStyle = newStyle;
-            this._prevDrawStyle = newStyle;
-        }
+        requestAnimationFrame( () => { this._pushAsyncFrame(); });
     }
 }

@@ -1,0 +1,7 @@
+# Build the validated application image first. Video is a separate candidate;
+# adding libraries does not enable the user-facing video option.
+ARG KASM_IMAGE=cloak-kasm15-candidate:qa
+FROM ${KASM_IMAGE}
+COPY ops/install_kasm_video.py ops/kasmvnc-video-packages.json /opt/kasm-upgrade/
+RUN python /opt/kasm-upgrade/install_kasm_video.py \
+    && rm -rf /var/lib/apt/lists/*

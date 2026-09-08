@@ -1,0 +1,4 @@
+ARG RUNTIME_BASE_IMAGE=ghcr.io/vivianjbrownz/cloakbrowser-manager@sha256:bf578160bb81d4cc7dea5a8c35c639adb75ef69f50b45e8e3eec67d0deb05a81
+FROM ${RUNTIME_BASE_IMAGE}
+COPY ops/install_kasmvnc.py ops/kasmvnc-runtime.json /opt/kasm-upgrade/
+RUN python /opt/kasm-upgrade/install_kasmvnc.py

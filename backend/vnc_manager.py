@@ -4,11 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from functools import lru_cache
+
+import websockets
 
 logger = logging.getLogger("cloakbrowser.manager.vnc")
+
+
+@lru_cache(maxsize=1)
+def kasmvnc_version() -> str | None:
+    """Read the installed server, not a build label or caller-controlled value."""
+    try:
+        result = subprocess.run(["Xvnc", "-version"], capture_output=True, text=True, timeout=3)
+        match = re.search(r"Xvnc KasmVNC (\d+\.\d+\.\d+)", result.stdout + result.stderr)
+        return match[1] if match else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 @dataclass
@@ -60,9 +76,14 @@ class VNCManager:
             "-SecurityTypes", "None",
             "-DisableBasicAuth",
             "-interface", "127.0.0.1",  # internal only, proxied by FastAPI
+            "-PublicIP", "127.0.0.1",  # WebSocket-only; skip automatic STUN IP discovery
             "-AlwaysShared",
             "-httpd", httpd_dir,
         ]
+        if os.environ.get("CLOAKBROWSER_KASM_VIDEO_ENABLED", "false").lower() in {"true", "1"}:
+            # Direct Xvnc invocation does not load vncserver's YAML defaults.
+            # Probe only software AVC; enabling the UI never selects a GPU.
+            cmd.extend(["-videoCodec", "h264"])
 
         log_path = f"/tmp/xvnc-{display}.log"
         logger.info("Starting Xvnc on :%d (ws_port=%d) log=%s", display, ws_port, log_path)
@@ -75,17 +96,42 @@ class VNCManager:
         )
         log_file.close()  # Popen inherited the fd, parent doesn't need it
 
-        # Wait a moment for Xvnc to initialize
-        await asyncio.sleep(0.5)
+        async def ready():
+            while proc.poll() is None:
+                try:
+                    async with websockets.connect(
+                        f"ws://127.0.0.1:{ws_port}/websockify", subprotocols=["binary"],
+                        origin=f"http://127.0.0.1:{ws_port}",
+                        compression=None, open_timeout=1, close_timeout=0.2,
+                    ) as socket:
+                        greeting = await asyncio.wait_for(socket.recv(), 1)
+                        if isinstance(greeting, bytes) and greeting.startswith(b"RFB "):
+                            return
+                except (OSError, TimeoutError, websockets.WebSocketException):
+                    pass
+                await asyncio.sleep(0.1)
+            raise RuntimeError("Xvnc exited before readiness")
 
-        if proc.poll() is not None:
+        try:
+            await asyncio.wait_for(ready(), timeout=10)
+        except BaseException as exc:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    await asyncio.to_thread(proc.wait, 3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    await asyncio.to_thread(proc.wait)
+            async with self._lock:
+                self._allocated.pop(display, None)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             try:
                 with open(log_path) as f:
-                    err = f.read()
-            except Exception as exc:
-                logger.debug("Failed to read Xvnc log %s: %s", log_path, exc)
+                    err = f.read()[-4000:]
+            except OSError:
                 err = ""
-            raise RuntimeError(f"Xvnc failed to start on :{display}: {err}")
+            raise RuntimeError(f"Xvnc failed readiness on :{display}: {err}") from exc
 
         async with self._lock:
             if display in self._allocated:

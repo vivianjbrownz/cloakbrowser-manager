@@ -1,7 +1,12 @@
 import RFB from "@novnc/novnc/core/rfb.js";
 
 export default class KasmRFB extends RFB {
-  constructor(target: HTMLElement, input: HTMLTextAreaElement, url: string, options: Record<string, unknown>, primary: boolean);
+  constructor(target: HTMLElement, input: HTMLTextAreaElement, url: string, options: Record<string, unknown>, codecs: number[], primary: boolean);
+  streamMode: number;
+  threading: boolean;
+  gop: number;
+  videoStreamQuality: number;
+  videoCodecConfigurations: Record<number, { presets: number[] }>;
   keyboard: { enableIME: boolean };
   mouseButtonMapper: Map<number, number>;
   translateShortcuts: boolean;

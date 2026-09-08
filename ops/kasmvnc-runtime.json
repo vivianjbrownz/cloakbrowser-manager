@@ -1,0 +1,9 @@
+{
+  "version": "1.5.0",
+  "package_version": "1.5.0-1",
+  "distribution": "trixie",
+  "architecture": "amd64",
+  "url": "https://github.com/kasmtech/KasmVNC/releases/download/v1.5.0/kasmvncserver_trixie_1.5.0_amd64.deb",
+  "sha256": "80b241de7dfe53bba2b7e1cc5ac8c5246d72271efa16be2d4f76607f30fab1c4",
+  "client_commit": "475ecfa5356579ef222983c7ce4619a7576a3bce"
+}

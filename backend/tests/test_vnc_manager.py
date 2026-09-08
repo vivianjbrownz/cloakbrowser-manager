@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import MagicMock
+import websockets
 
 from backend.vnc_manager import VNCInstance, VNCManager
 
@@ -10,6 +12,34 @@ from backend.vnc_manager import VNCInstance, VNCManager
 @pytest.fixture()
 def vnc() -> VNCManager:
     return VNCManager()
+
+
+@pytest.mark.asyncio
+async def test_start_waits_for_actual_rfb_service(vnc, monkeypatch):
+    proc = MagicMock()
+    proc.poll.return_value = None
+    monkeypatch.setattr("backend.vnc_manager.subprocess.Popen", lambda *a, **kw: proc)
+    async def greeting(socket):
+        await socket.send(b"RFB 003.008\n")
+        await socket.wait_closed()
+    display, _ = await vnc.allocate()
+    async with websockets.serve(greeting, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        assert await vnc.start_vnc(display, port) is proc
+    assert vnc._allocated[display].process is proc
+    proc.terminate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_start_releases_display(vnc, monkeypatch):
+    proc = MagicMock()
+    proc.poll.return_value = 1
+    monkeypatch.setattr("backend.vnc_manager.subprocess.Popen", lambda *a, **kw: proc)
+    display, port = await vnc.allocate()
+    with pytest.raises(RuntimeError, match="failed readiness"):
+        await vnc.start_vnc(display, port)
+    assert vnc.active_displays == []
+    assert (await vnc.allocate())[0] == display
 
 
 # ── allocate ─────────────────────────────────────────────────────────────────

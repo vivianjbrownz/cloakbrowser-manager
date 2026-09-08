@@ -1,6 +1,165 @@
+--- a/core/decoders/kasmvideo.js
++++ b/core/decoders/kasmvideo.js
+@@ -311,7 +311,7 @@
+ 
+     dispose() {
+         for (let screen of this._decoders.values()) {
+-            screen.decoder.close();
++            if (screen.decoder.state !== "closed") screen.decoder.close();
+         }
+         this._decoders.clear();
+ 
+--- a/core/decoders/qoi/decoder.js
++++ b/core/decoders/qoi/decoder.js
+@@ -249,7 +249,7 @@
+ 
+ async function init(input) {
+   if (typeof input === 'undefined') {
+-    input = path + 'core/decoders/qoi/qoi_viewer_bg.wasm';
++    input = new URL('./qoi_viewer_bg.wasm', import.meta.url);
+   }
+   const imports = {};
+   imports.wbg = {};
+--- a/core/display.js
++++ b/core/display.js
+@@ -12,7 +12,7 @@
+ import { toSigned32bit } from './util/int.js';
+ import { isWindows } from './util/browser.js';
+ import { uuidv4 } from './util/strings.js';
+-import UI from '../app/ui.js';
++// Manager owns the single-viewer UI; never import the upstream global page.
+ import { encodings } from "./encodings.js";
+ import {Canvas2DRenderer} from "./renderers/Canvas2DRenderer";
+ import {WebGLRenderer} from "./renderers/WebGLRenderer";
+@@ -140,6 +140,9 @@
+         this._fps = 0;
+         this._isPrimaryDisplay = isPrimaryDisplay;
+         this._screenID = uuidv4();
++        this._registeredWindows = new Map();
++        this._displayWindows = new Map();
++        this._disposed = false;
+         this._screens = [{
+             screenID: this._screenID,
+             screenIndex: 0,
+@@ -470,7 +473,7 @@
+ 
+             this._screens.push(new_screen);
+             if (new_screen.channel) {
+-                UI.registeredWindows.set(screenID, windowId);
++                this._registeredWindows.set(screenID, windowId);
+                 new_screen.channel.postMessage({eventType: "registered", screenIndex: new_screen.screenIndex});
+             } else
+                 Log.Debug(`Channel not found for screenId ${screenID}`);
+@@ -508,10 +511,10 @@
+                 if (this._screens[i].screenID == screenID) {
+                     //flush all rects on target screen
+                     this._flushRectsScreen(i);
+-                    const windowId = UI.registeredWindows.get(screenID);
++                    const windowId = this._registeredWindows.get(screenID);
+                     if (windowId) {
+-                        UI.registeredWindows.delete(screenID);
+-                        UI.displayWindows.delete(windowId);
++                        this._registeredWindows.delete(screenID);
++                        this._displayWindows.delete(windowId);
+                     }
+                     this._screens.splice(i, 1);
+                     removed = true;
+@@ -677,6 +680,15 @@
+     * Cleans up resources, should be called on a disconnect
+     */
+     dispose() {
++        this._disposed = true;
++        this._broadcastChannel?.close();
++        this._portRelayWorker?.port.close();
++        this._encodedFramePort?.close();
++        if (this._localDecoder?.state !== "closed") this._localDecoder?.close();
++        for (const screen of this._screens) {
++            screen.channel?.close();
++            screen.encodedFramePort?.close();
++        }
+         if (this._frameStatsInterval) {
+             clearInterval(this._frameStatsInterval);
+             this._frameStatsInterval = null;
+@@ -1065,6 +1077,7 @@
+     }
+ 
+     _pushSyncRects() {
++        if (this._disposed) return;
+         let drawRectCnt = 0;
+         whileLoop:
+         while (this._syncFrameQueue.length > 0) {
+@@ -1143,6 +1156,11 @@
+     Process incoming rects into a frame buffer, assume rects are out of order due to either UDP or parallel processing of decoding
+     */
+     _asyncRenderQPush(rect) {
++        if (this._disposed) {
++            rect.frame?.close();
++            rect.img?.close?.();
++            return;
++        }
+         let frameIx = -1;
+         let oldestFrameID = Number.MAX_SAFE_INTEGER;
+         let newestFrameID = 0;
+@@ -1301,6 +1319,7 @@
+     Push the oldest frame in the buffer to the canvas if it is marked ready
+     */
+     _pushAsyncFrame(force=false) {
++        if (this._disposed) return;
+         // Record frame-to-frame interval
+         perfLogger.recordFrameInterval();
+ 
+--- /dev/null
++++ b/core/rfb.d.ts
+@@ -0,0 +1,36 @@
++import RFB from "@novnc/novnc/core/rfb.js";
++
++export default class KasmRFB extends RFB {
++  constructor(target: HTMLElement, input: HTMLTextAreaElement, url: string, options: Record<string, unknown>, codecs: number[], primary: boolean);
++  streamMode: number;
++  threading: boolean;
++  gop: number;
++  videoStreamQuality: number;
++  videoCodecConfigurations: Record<number, { presets: number[] }>;
++  keyboard: { enableIME: boolean };
++  mouseButtonMapper: Map<number, number>;
++  translateShortcuts: boolean;
++  clipboardUp: boolean;
++  clipboardDown: boolean;
++  clipboardSeamless: boolean;
++  clipboardBinary: boolean;
++  enableWebRTC: boolean;
++  enableHiDpi: boolean;
++  enableWebP: boolean;
++  videoQuality: number;
++  frameRate: number;
++  dynamicQualityMin: number;
++  dynamicQualityMax: number;
++  jpegVideoQuality: number;
++  webpVideoQuality: number;
++  maxVideoResolutionX: number;
++  maxVideoResolutionY: number;
++  treatLossless: number;
++  videoTime: number;
++  videoArea: number;
++  videoScaling: number;
++  videoOutTime: number;
++  forcedResolutionX: number | null;
++  forcedResolutionY: number | null;
++  updateConnectionSettings(): void;
++}
 --- a/core/rfb.js
 +++ b/core/rfb.js
-@@ -119,7 +119,8 @@
+@@ -20,8 +20,7 @@
+ import Inflator from "./inflator.js";
+ import Deflator from "./deflator.js";
+ import Keyboard from "./input/keyboard.js";
+-import initializePrinterRelay from "./output/printer.js";
+-import initializeSmartcardRelay from "./output/smartcard.js";
++// Manager does not subscribe to printer or smart-card relays.
+ import GestureHandler from "./input/gesturehandler.js";
+ import Cursor from "./util/cursor.js";
+ import Websock from "./websock.js";
+@@ -128,7 +127,8 @@
          this._supportsContinuousUpdates = false;
          this._enabledContinuousUpdates = false;
          this._supportsSetDesktopSize = false;
@@ -10,7 +169,7 @@
          this._screenFlags = 0;
          this._qemuExtKeyEventSupported = false;
  
-@@ -141,7 +142,7 @@
+@@ -151,7 +151,7 @@
          this._forcedResolutionY = null;
          this._clipboardBinary = true;
          this._resendClipboardNextUserDrivenEvent = true;
@@ -18,21 +177,29 @@
 +        this._useUdp = options.enableWebRTC !== false;
          this._hiDpi = 'hiDpi' in options ? !!options.hiDpi : false;
          this._enableQOI = false;
-         this._videoQuality =  2;
-@@ -1231,8 +1232,10 @@
+         this._videoQuality = 2;
+@@ -227,7 +227,7 @@
+         this._gestureLastMagnitudeY = 0;
+ 
+         // Secondary Displays
+-        this._supportsMultiMonitor = (typeof BroadcastChannel !== "undefined" && typeof SharedWorker !== "undefined");
++        this._supportsMultiMonitor = options.allowMultiMonitor !== false && (typeof BroadcastChannel !== "undefined" && typeof SharedWorker !== "undefined");
+         if (this._supportsMultiMonitor) {
+             this._controlChannel = new BroadcastChannel(this._connectionID);
+             this._controlChannel.addEventListener('message', this._handleControlMessage.bind(this));
+@@ -1340,8 +1340,9 @@
          this._cursor.attach(this._canvas);
          this._refreshCursor();
  
 -        // Monitor size changes of the screen
 -        // FIXME: Use ResizeObserver, or hidden overflow
-+        // The Manager can resize this container without a window resize (for
-+        // example, collapsing its sidebar). Keep local scaling in sync.
++        // Manager layout changes must only rescale the local canvas.
 +        this._resizeObserver = new ResizeObserver(this._eventHandlers.windowResize);
 +        this._resizeObserver.observe(this._screen);
          window.addEventListener('resize', this._eventHandlers.windowResize);
  
          // Always grab focus on some kind of click event
-@@ -1285,7 +1288,7 @@
+@@ -1394,7 +1395,7 @@
          this._resendClipboardNextUserDrivenEvent = true;
  
          // WebRTC UDP datachannel inits
@@ -41,30 +208,35 @@
              this._udpBuffer = new Map();
  
              this._udpPeer = new RTCPeerConnection({
-@@ -1420,7 +1423,11 @@
+@@ -1529,6 +1530,10 @@
          this._canvas.removeEventListener("touchstart", this._eventHandlers.focusCanvas);
          this._canvas.removeEventListener("focus", this._eventHandlers.handleFocusChange);
          window.removeEventListener('resize', this._eventHandlers.windowResize);
 +        this._resizeObserver?.disconnect();
-         window.removeEventListener('focus', this._eventHandlers.handleFocusChange);
 +        window.removeEventListener('blur', this._eventHandlers.handleFocusChange);
 +        window.removeEventListener('mouseover', this._eventHandlers.handleMouseOut);
 +        this._canvas.removeEventListener('touchend', this._eventHandlers.updateHiddenKeyboard);
+         window.removeEventListener('focus', this._eventHandlers.handleFocusChange);
          document.removeEventListener('visibilitychange', this._eventHandlers.handleVisibilityChange);
  
-         this._keyboard.ungrab();
-@@ -1447,6 +1454,10 @@
+@@ -1555,7 +1560,16 @@
+                 throw e;
              }
          }
++        for (const decoder of Object.values(this._decoders)) {
++            decoder.dispose?.();
++            if ("enableQOI" in decoder) decoder.enableQOI = false;
++        }
          this._display.dispose();
 +        this._controlChannel?.close();
 +        this._controlChannel = null;
 +        this._udpChannel?.close();
 +        this._udpPeer?.close();
++        clearTimeout(this._forceFullFrameUpdateTimeout);
          clearTimeout(this._resizeTimeout);
          clearTimeout(this._mouseMoveTimer);
          window.localStorage.removeItem('lastWindow')
-@@ -1456,7 +1467,7 @@
+@@ -1565,7 +1579,7 @@
      _updateHiddenKeyboard(event) {
          // On iOS 15 the navigation bar is at the bottom so we need to account for it
          const y = Math.max(0, event.pageY - 50);
@@ -73,7 +245,7 @@
      }
  
      _handleFocusChange(event) {
-@@ -1589,6 +1600,7 @@
+@@ -1698,6 +1712,7 @@
      _requestRemoteResize() {
          clearTimeout(this._resizeTimeout);
          this._resizeTimeout = null;
@@ -81,7 +253,7 @@
  
          if (this._isPrimaryDisplay) {
              if (
-@@ -1792,7 +1804,7 @@
+@@ -1923,7 +1938,7 @@
              screenIndex: this._display.screenIndex,
              mouseLastScreenIndex: this._mouseLastScreenIndex,
          }
@@ -90,3 +262,94 @@
      }
  
      _handleControlMessage(event) {
+@@ -2085,7 +2100,7 @@
+                 eventType: 'unregister',
+                 screenID: this._display.screenID
+             }
+-            this._controlChannel.postMessage(message);
++            this._controlChannel?.postMessage(message);
+         }
+     }
+ 
+@@ -2117,7 +2132,7 @@
+                 channel: null,
+                 details
+             }
+-            this._controlChannel.postMessage(message);
++            this._controlChannel?.postMessage(message);
+ 
+             if (!this._viewOnly) { this._keyboard.grab(); }
+             // return screen.screenID
+@@ -2134,7 +2149,7 @@
+             eventType: 'identify',
+             screens
+         }
+-        this._controlChannel.postMessage(message);
++        this._controlChannel?.postMessage(message);
+     }
+ 
+     _handleSecondaryDisplayMessage(event) {
+@@ -3247,8 +3262,6 @@
+         this._updateConnectionState('connected');
+ 
+         //Register pipe based extensions
+-        initializePrinterRelay(this);
+-        initializeSmartcardRelay(this);
+ 
+         return true;
+     }
+@@ -4018,32 +4031,29 @@
+     }
+ 
+     _handleServerVideoEncoders() {
+-        if (this._sock.rQwait("VideoEncoders header", 1, 1))
+-            return false;
+-
+-        let num = this._sock.rQshift8();
+-
+-        // Each encoder has variable length data:
+-        // codec(4) + minQuality(4) + maxQuality(4) + numPresets(1) + presets(4*n)
+-        // Minimum is 13 bytes per encoder
+-        if (this._sock.rQwait("VideoEncoders data", num * 13, 1))
+-            return false;
++        // Rewind the complete message on any partial variable-length record.
++        // WebSocket boundaries do not coincide with RFB message boundaries.
++        const messageStart = this._sock._rQi - 1;
++        const incomplete = (length) => {
++            if (!this._sock.rQwait("VideoEncoders", length)) return false;
++            this._sock._rQi = messageStart;
++            return true;
++        };
++        if (incomplete(1)) return false;
++        const num = this._sock.rQshift8();
+ 
+         let serverSupportedEncoders = [];
+         let codecConfigurations = {};
+ 
+         for (let i = 0; i < num; i++) {
+-            const codec = this._sock.rQshift32();
++            if (incomplete(13)) return false;
++            const codec = toSigned32bit(this._sock.rQshift32());
+ 
+             const minQuality = this._sock.rQshift32();
+             const maxQuality = this._sock.rQshift32();
+ 
+             const numPresets = this._sock.rQshift8();
+-            if (numPresets > 0) {
+-                if (this._sock.rQwait("VideoEncoders presets", numPresets * 4)) {
+-                    return false;
+-                }
+-            }
++            if (incomplete(numPresets * 4)) return false;
+ 
+             const presets = [];
+             for (let j = 0; j < numPresets; j++) {
+@@ -4067,6 +4077,8 @@
+                 configurations: codecConfigurations
+             }
+         }));
++        // A following framebuffer update may already be in the receive queue.
++        return true;
+     }
+ 
+     _handleForceGameMode() {

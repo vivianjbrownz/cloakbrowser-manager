@@ -306,7 +306,7 @@ async function request<T>(
 }
 
 export const api = {
-  authStatus: () =>
+  authStatus: (signal?: AbortSignal) =>
     request<{
       auth_required: boolean;
       authenticated: boolean;
@@ -314,7 +314,9 @@ export const api = {
       email?: string;
       assigned_profile_id?: string;
       viewer_default?: ViewerImplementation;
-    }>("/api/auth/status"),
+      kasmvnc_version?: string | null;
+      kasm_video_enabled?: boolean;
+    }>("/api/auth/status", { signal }),
 
   login: (token: string) =>
     request<{ ok: boolean }>("/api/auth/login", {

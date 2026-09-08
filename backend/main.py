@@ -75,6 +75,7 @@ logging.getLogger("asyncio").setLevel(logging.WARNING)
 # (except /api/auth/* and /api/status) require Bearer token or cookie.
 AUTH_TOKEN: str | None = os.environ.get("AUTH_TOKEN") or None
 VIEWER_DEFAULT = os.environ.get("CLOAKBROWSER_VIEWER_DEFAULT", "novnc")
+KASM_VIDEO_ENABLED = os.environ.get("CLOAKBROWSER_KASM_VIDEO_ENABLED", "false").lower() in {"true", "1"}
 if VIEWER_DEFAULT not in {"novnc", "kasm"}:
     raise ValueError("CLOAKBROWSER_VIEWER_DEFAULT must be novnc or kasm")
 AGENTOS_SCOPED_AUTH_SECRET: str | None = os.environ.get("AGENTOS_SCOPED_AUTH_SECRET") or None
@@ -691,6 +692,9 @@ async def auth_status(request: starlette.requests.Request):
 
     Exempt from auth middleware so the frontend can always call it.
     """
+    from .vnc_manager import kasmvnc_version
+    viewer = {"viewer_default": VIEWER_DEFAULT, "kasmvnc_version": kasmvnc_version(),
+              "kasm_video_enabled": KASM_VIDEO_ENABLED and kasmvnc_version() == "1.5.0"}
     scoped = _scoped_identity(request.scope)
     if scoped:
         email, profile_id = scoped
@@ -700,7 +704,7 @@ async def auth_status(request: starlette.requests.Request):
             "role": "scoped",
             "email": email,
             "assigned_profile_id": profile_id,
-            "viewer_default": VIEWER_DEFAULT,
+            **viewer,
         }
     authenticated = False
     if AUTH_TOKEN:
@@ -709,7 +713,7 @@ async def auth_status(request: starlette.requests.Request):
         "auth_required": AUTH_TOKEN is not None,
         "authenticated": authenticated,
         "role": "admin",
-        "viewer_default": VIEWER_DEFAULT,
+        **viewer,
     }
 
 

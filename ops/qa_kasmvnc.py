@@ -8,11 +8,15 @@ import argparse
 import asyncio
 import json
 import math
+import itertools
 import os
 from pathlib import Path
 import statistics
+import subprocess
+import signal
 import time
 from uuid import uuid4
+from urllib.parse import urlparse
 
 import httpx
 from playwright.async_api import async_playwright
@@ -30,10 +34,19 @@ for(const name of Object.keys(counts))document.addEventListener(name,()=>{
  counts[name]++;marker.style.background=colors[++n%colors.length];
 });</script>"""
 
-FINGERPRINT = """() => ({userAgent:navigator.userAgent, platform:navigator.platform,
+FINGERPRINT = """async () => {
+ const c=document.createElement('canvas'); c.width=160;c.height=60;
+ const ctx=c.getContext('2d');ctx.font='16px Arial';ctx.fillStyle='#237';ctx.fillText('Cloak QA 中文 123',3,24);
+ const canvas=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(c.toDataURL()))),b=>b.toString(16).padStart(2,'0')).join('');
+ const g=document.createElement('canvas').getContext('webgl');
+ const ext=g?.getExtension('WEBGL_debug_renderer_info');
+ const webgl=g?{vendor:g.getParameter(ext?ext.UNMASKED_VENDOR_WEBGL:g.VENDOR),
+ renderer:g.getParameter(ext?ext.UNMASKED_RENDERER_WEBGL:g.RENDERER),extensions:g.getSupportedExtensions()}:null;
+ g?.getExtension('WEBGL_lose_context')?.loseContext();
+ return {canvas,webgl,userAgent:navigator.userAgent, platform:navigator.platform,
  hardwareConcurrency:navigator.hardwareConcurrency, screen:[screen.width,screen.height,screen.colorDepth],
  viewport:[innerWidth,innerHeight], locale:navigator.language,
- timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})"""
+ timezone:Intl.DateTimeFormat().resolvedOptions().timeZone}; }"""
 
 # Samples the decoded canvas, not an HTTP response or server-side DOM change.
 ARM_SAMPLE = """({x,y,eventType}) => {
@@ -58,30 +71,55 @@ def summarize(samples):
     ordered = sorted(samples)
     return {"samples": len(samples), "median_ms": round(statistics.median(samples), 1),
             "p95_ms": round(ordered[math.ceil(.95 * len(ordered)) - 1], 1),
-            "max_ms": round(max(samples), 1)}
+            "max_ms": round(max(samples), 1), "raw_ms": [round(x, 2) for x in samples]}
 
 
 async def run(args):
-    token = Path(args.token_file).read_text().strip().removeprefix("AUTH_TOKEN=")
-    headers = {"Authorization": f"Bearer {token}"}
-    report = {"base_url": args.base_url, "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-              "cases": [], "errors": [], "soak_seconds": args.soak_seconds,
+    token = Path(args.token_file).read_text().strip().splitlines()[0].removeprefix("AUTH_TOKEN=") if args.token_file else None
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    cookies = httpx.Cookies()
+    if args.access_storage_state:
+        for cookie in json.loads(Path(args.access_storage_state).read_text()).get("cookies", []):
+            host, domain = urlparse(args.base_url).hostname, cookie["domain"].lstrip(".")
+            if host == domain or host.endswith("." + domain):
+                cookies.set(cookie["name"], cookie["value"], domain=cookie["domain"], path=cookie["path"])
+    report = {"run_id": uuid4().hex, "base_url": args.base_url, "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "cases": [], "errors": [], "soak_seconds": 0,
+              "network_label": args.network_label, "stream_mode": args.stream_mode,
               "note": "Automation host measurements; not a substitute for the user's network/device."}
-    async with httpx.AsyncClient(base_url=args.base_url, headers=headers, timeout=90) as api:
+    if args.container:
+        report["image_id"] = subprocess.check_output(["docker", "inspect", "--format", "{{.Image}}", args.container], text=True).strip()
+    elif args.image_id:
+        report["image_id"] = args.image_id
+        report["image_id_source"] = "Operator supplied from the remote Docker host"
+    def capacity_guard():
+        if args.background_profiles and args.container:
+            memory = dict((line.split()[0].rstrip(":"), int(line.split()[1])) for line in Path("/proc/meminfo").read_text().splitlines())
+            if memory["MemAvailable"] < max(memory["MemTotal"]*.15, 1536*1024):
+                raise RuntimeError("Capacity guard: less than 15% / 1.5 GiB host memory available")
+    async with httpx.AsyncClient(base_url=args.base_url, headers=headers, cookies=cookies, timeout=90) as api:
         async def request(method, path, **kwargs):
             response = await api.request(method, path, **kwargs)
             response.raise_for_status()
             return response.json()
 
         report["server"] = await request("GET", "/api/status")
+        report["viewer"] = await request("GET", "/api/auth/status")
+        cookie_request = api.build_request("GET", "/api/status")
+        cdp_headers = dict(headers)
+        if cookie_request.headers.get("cookie"):
+            cdp_headers["Cookie"] = cookie_request.headers["cookie"]
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, executable_path=args.chromium or None,
                                              args=["--no-sandbox", "--disable-background-timer-throttling", "--disable-renderer-backgrounding"])
+            report["client"] = {"browser": browser.version, "cpu_count": os.cpu_count(),
+                                "viewport": {"width": 1500, "height": 1100}}
             try:
-                for concurrency in args.concurrency:
+                for concurrency, case_mode in itertools.product(args.concurrency, args.modes):
                     owned, remotes, remote_pages, before = [], [], [], []
                     try:
-                        for i in range(concurrency):
+                        for i in range(concurrency+args.background_profiles):
+                            capacity_guard()
                             profile = await request("POST", "/api/profiles", json={
                                 "name": f"Kasm QA {uuid4().hex[:8]}", "fingerprint_seed": 456789+i,
                                 "screen_width": 1280, "screen_height": 900, "headless": False,
@@ -90,27 +128,31 @@ async def run(args):
                             })
                             owned.append(profile)
                             await request("POST", f"/api/profiles/{profile['id']}/launch")
+                            report["launched_profiles"] = len(owned)
                             endpoint = args.base_url.replace("https:", "wss:").replace("http:", "ws:")
-                            remote = await p.chromium.connect_over_cdp(f"{endpoint}/api/profiles/{profile['id']}/cdp", headers=headers)
+                            remote = await p.chromium.connect_over_cdp(f"{endpoint}/api/profiles/{profile['id']}/cdp", headers=cdp_headers)
                             remotes.append(remote)
                             target = remote.contexts[0].pages[0]
                             await target.route("http://127.0.0.1:8080/__viewer_qa", lambda route: route.fulfill(content_type="text/html", body=FIXTURE))
                             await target.goto("http://127.0.0.1:8080/__viewer_qa")
                             await target.evaluate("localStorage.setItem('viewer-qa-session', 'preserved')")
+                            if i >= concurrency:
+                                await target.evaluate("setInterval(()=>{document.querySelector('p').textContent='Background calibration tick '+Date.now()},5000)")
                             remote_pages.append(target)
                             before.append(await target.evaluate(FINGERPRINT))
 
-                        for mode in args.modes:
+                        for mode in [case_mode]:
                             contexts = []
                             pages, errors, wire = [], [], {"sent": 0, "received": 0, "closed": 0}
                             try:
-                                for profile in owned:
+                                for profile in owned[:concurrency]:
                                     # Separate contexts/windows avoid hidden-tab rAF throttling
                                     # masquerading as remote-server latency in concurrency runs.
-                                    context = await browser.new_context(viewport={"width": 1500, "height": 1100}, permissions=["clipboard-read", "clipboard-write"])
+                                    context = await browser.new_context(viewport={"width": 1500, "height": 1100}, permissions=["clipboard-read", "clipboard-write"], storage_state=args.access_storage_state or None)
                                     contexts.append(context)
-                                    await context.add_cookies([{"name": "auth_token", "value": token, "url": args.base_url}])
-                                    await context.add_init_script(f"localStorage.setItem('cloakbrowser.viewer.implementation', {json.dumps(mode)});localStorage.setItem('cloakbrowser.viewer.qualityMode','fast')")
+                                    if token:
+                                        await context.add_cookies([{"name": "auth_token", "value": token, "url": args.base_url}])
+                                    await context.add_init_script(f"localStorage.setItem('cloakbrowser.viewer.implementation', {json.dumps(mode)});localStorage.setItem('cloakbrowser.viewer.qualityMode','fast');localStorage.setItem('cloakbrowser.viewer.streamMode',{json.dumps(args.stream_mode)})")
                                     await context.add_init_script("""window.__qaSockets=[];
                                       window.WebSocket=new Proxy(window.WebSocket,{construct(Target,args){
                                         const socket=new Target(...args);window.__qaSockets.push(socket);return socket;
@@ -133,6 +175,8 @@ async def run(args):
                                         print(json.dumps({"connect_errors": errors, "page_text": await page.locator("body").inner_text()}), flush=True)
                                         raise
                                     pages.append(page)
+                                    if mode == "kasm" and args.stream_mode == "h264":
+                                        await page.wait_for_function("document.querySelector('[aria-label=\"Stream mode\"]')?.value === 'h264'", timeout=10000)
 
                                 async def exercise(page, target, index):
                                     await page.bring_to_front()
@@ -153,13 +197,22 @@ async def run(args):
                                     dims = await canvas.evaluate("c=>({w:c.width,h:c.height})")
                                     box = await canvas.bounding_box()
                                     x, y = box["x"]+point["x"]*box["width"]/dims["w"], box["y"]+point["y"]*box["height"]/dims["h"]
+                                    first_click_before = await target.evaluate("counts.click")
                                     await page.mouse.click(x, y)
+                                    try:
+                                        await target.wait_for_function("n => counts.click > n", arg=first_click_before, polling=50, timeout=2000)
+                                        first_click_received = True
+                                    except Exception:
+                                        first_click_received = False
                                     # Record XInput's first-wheel initialization separately from
                                     # steady-state samples; do not count it as painted feedback.
                                     first_scroll_before = await target.evaluate("counts.wheel")
                                     await page.mouse.wheel(0, 120)
-                                    await page.wait_for_timeout(300)
-                                    first_scroll_received = await target.evaluate("counts.wheel") > first_scroll_before
+                                    try:
+                                        await target.wait_for_function("n => counts.wheel > n", arg=first_scroll_before, polling=50, timeout=2000)
+                                        first_scroll_received = True
+                                    except Exception:
+                                        first_scroll_received = False
                                     await page.mouse.wheel(0, 120)
                                     await target.locator("#text").focus()
                                     await page.wait_for_timeout(200)
@@ -188,12 +241,30 @@ async def run(args):
                                     after = await target.evaluate(FINGERPRINT)
                                     assert after == before[index], "Viewer changed browser fingerprint/geometry"
                                     results["first_scroll_received"] = first_scroll_received
+                                    results["first_click_received"] = first_click_received
+                                    results["first_input_receipt_timeout_ms"] = 2000
                                     if index == 0:
                                         out = Path(args.output).parent
                                         await page.screenshot(path=str(out/f"kasm-qa-{concurrency}-{mode}.png"))
                                     return results
 
-                                measurements = await asyncio.gather(*(exercise(page, target, i) for i, (page, target) in enumerate(zip(pages, remote_pages))))
+                                wire_start = dict(wire)
+                                measured_at = time.time()
+                                measured_start = time.monotonic()
+                                tasks = [asyncio.create_task(exercise(page, target, i)) for i, (page, target) in enumerate(zip(pages, remote_pages))]
+                                try:
+                                    measurements = await asyncio.gather(*tasks)
+                                except Exception:
+                                    for task in tasks:
+                                        task.cancel()
+                                    await asyncio.gather(*tasks, return_exceptions=True)
+                                    for i, page in enumerate(pages):
+                                        await page.screenshot(path=str(Path(args.output).parent/f"failed-{mode}-{i}.png"))
+                                        print(json.dumps({"failed_viewer": i, "client_errors": errors,
+                                            "canvas": await page.locator("canvas").evaluate_all("cs=>cs.map(c=>({w:c.width,h:c.height,box:c.getBoundingClientRect().toJSON()}))")}), flush=True)
+                                    raise
+                                measured_wire = {key: wire[key]-wire_start[key] for key in wire}
+                                measured_seconds = time.monotonic()-measured_start
                                 functional = {}
                                 if mode == "kasm":
                                     page, target = pages[0], remote_pages[0]
@@ -259,16 +330,25 @@ async def run(args):
                                     await page.screenshot(path=str(Path(args.output).parent / "viewer-mobile.png"))
                                     await page.set_viewport_size({"width": 1500, "height": 1100})
                                 if mode == "kasm" and args.soak_seconds and concurrency == max(args.concurrency):
-                                    deadline = time.monotonic()+args.soak_seconds
+                                    soak_started = time.monotonic()
+                                    deadline = soak_started+args.soak_seconds
                                     while time.monotonic() < deadline:
+                                        capacity_guard()
                                         for page in pages:
                                             await page.keyboard.press("ArrowDown")
                                             assert await page.get_by_text("Connected", exact=True).count() == 1
                                         await asyncio.sleep(min(30, max(0, deadline-time.monotonic())))
                                         print(f"soak concurrency={concurrency}: {max(0, round(deadline-time.monotonic()))}s remaining", flush=True)
+                                    report["soak_seconds"] = round(time.monotonic()-soak_started, 2)
                                 assert not errors, f"Viewer JavaScript errors: {errors}"
                                 assert wire["closed"] == 0, "Unexpected viewer disconnect"
-                                report["cases"].append({"concurrency": concurrency, "mode": mode, "measurements": measurements, "wire": wire, "functional": functional, "fingerprint_unchanged": True})
+                                report["cases"].append({"concurrency": concurrency, "mode": mode, "stream_mode": args.stream_mode,
+                                    "measurements": measurements, "wire": wire, "measured_wire": measured_wire,
+                                    "measurement_started_at": measured_at,
+                                    "measurement_ended_at": measured_at+measured_seconds,
+                                    "measured_seconds": round(measured_seconds, 3), "fingerprints": before[:concurrency],
+                                    "background_profiles": args.background_profiles,
+                                    "functional": functional, "fingerprint_unchanged": True})
                                 print(json.dumps(report["cases"][-1]), flush=True)
                             finally:
                                 await asyncio.gather(*(context.close() for context in contexts))
@@ -276,8 +356,14 @@ async def run(args):
                         for remote in remotes:
                             await remote.close()  # Disconnect CDP; manager stops its own QA Profile below.
                         for profile in owned:
-                            await request("POST", f"/api/profiles/{profile['id']}/stop")
-                            await request("DELETE", f"/api/profiles/{profile['id']}")
+                            # A failed launch has no running entry; stopping it
+                            # returns 404. Still delete the owned QA Profile.
+                            stopped = await api.post(f"/api/profiles/{profile['id']}/stop")
+                            if stopped.status_code not in (200, 404):
+                                report["errors"].append(f"QA stop failed: {stopped.status_code}")
+                            deleted = await api.delete(f"/api/profiles/{profile['id']}")
+                            if deleted.status_code not in (200, 204, 404):
+                                report["errors"].append(f"QA cleanup failed: {deleted.status_code}")
             except Exception as exc:
                 report["errors"].append(f"{type(exc).__name__}: {exc}")
                 raise
@@ -289,7 +375,14 @@ async def run(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:18981")
-    parser.add_argument("--token-file", required=True)
+    parser.add_argument("--token-file")
+    parser.add_argument("--access-storage-state", help="Private Playwright cookies saved on the user's own device")
+    parser.add_argument("--network-label", default="automation-host")
+    parser.add_argument("--stream-mode", choices=["image", "h264"], default="image")
+    identity = parser.add_mutually_exclusive_group()
+    identity.add_argument("--container", help="Local Docker container name, records exact image identity")
+    identity.add_argument("--image-id", help="Remote image ID obtained from the deployment host")
+    parser.add_argument("--background-profiles", type=int, default=0)
     parser.add_argument("--output", required=True)
     parser.add_argument("--chromium", default=os.environ.get("QA_CHROMIUM", ""))
     parser.add_argument("--samples", type=int, default=50)
@@ -297,7 +390,16 @@ if __name__ == "__main__":
     parser.add_argument("--modes", nargs="+", choices=["novnc", "kasm"], default=["novnc", "kasm"])
     parser.add_argument("--soak-seconds", type=int, default=0)
     args = parser.parse_args()
+    if not args.token_file and not args.access_storage_state:
+        parser.error("Provide a local token file or Access/Manager login storage state")
     if args.samples < 1 or any(n < 1 or n > 3 for n in args.concurrency):
         parser.error("Use positive sample counts and 1–3 simultaneous QA Profiles")
+    if not 0 <= args.background_profiles <= 17:
+        parser.error("Use 0–17 background calibration Profiles")
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    asyncio.run(run(args))
+    async def main():
+        loop, task = asyncio.get_running_loop(), asyncio.current_task()
+        if os.name != "nt":
+            loop.add_signal_handler(signal.SIGTERM, task.cancel)
+        await run(args)
+    asyncio.run(main())

@@ -12,9 +12,15 @@ RUN npm run build
 
 FROM ${RUNTIME_BASE_IMAGE}
 
+# A narrow, checksum-locked display-server upgrade. dpkg must resolve against
+# the existing foundation; unrelated browser/graphics packages cannot drift.
+COPY ops/install_kasmvnc.py ops/kasmvnc-runtime.json /opt/kasm-upgrade/
+RUN python /opt/kasm-upgrade/install_kasmvnc.py
+
 LABEL org.opencontainers.image.source="https://github.com/vivianjbrownz/cloakbrowser-manager"
 LABEL org.opencontainers.image.description="BeginOS inventory build of CloakBrowser Manager"
 LABEL org.opencontainers.image.licenses="MIT"
+LABEL io.cloakbrowser.kasmvnc.version="1.5.0"
 
 COPY backend/ /app/backend/
 COPY --from=frontend-builder /build/dist /app/frontend/dist

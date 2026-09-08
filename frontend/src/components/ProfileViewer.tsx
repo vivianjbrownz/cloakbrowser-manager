@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ClipboardCopy, Code2, Gauge, Maximize2, Minimize2 } from "lucide-react";
 import { api, ApiError, type ViewerImplementation } from "../lib/api";
-import { createViewer, VIEWER_QUALITY_MODES, type ViewerConnection, type ViewerQualityMode } from "../lib/viewer";
+import { createViewer, VIEWER_QUALITY_MODES, ViewerVersionError, type ViewerConnection, type ViewerQualityMode, type ViewerStreamMode, type ViewerStreamState } from "../lib/viewer";
 
 interface ProfileViewerProps {
   profileId: string;
@@ -16,6 +16,7 @@ const XK_v = 0x0076;
 const VIEWER_MODE_STORAGE_KEY = "cloakbrowser.viewer.qualityMode";
 
 const IMPLEMENTATION_STORAGE_KEY = "cloakbrowser.viewer.implementation";
+const STREAM_STORAGE_KEY = "cloakbrowser.viewer.streamMode";
 const RETRY_DELAYS = [1000, 2000, 4000, 8000, 8000];
 
 function loadImplementation(fallback: ViewerImplementation): ViewerImplementation {
@@ -61,6 +62,8 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [reconnectKey, setReconnectKey] = useState(0);
   const qualityRef = useRef(viewerMode);
+  const [streamState, setStreamState] = useState<ViewerStreamState>({ enabled: false, available: false, mode: "image" });
+  const streamRef = useRef<ViewerStreamMode>("image");
   const onDisconnectRef = useRef(onDisconnect);
   onDisconnectRef.current = onDisconnect;
 
@@ -77,6 +80,8 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
     setConnected(false);
     setError(null);
     setRetryAttempt(0);
+    setStreamState({ enabled: false, available: false, mode: "image" });
+    try { streamRef.current = localStorage.getItem(STREAM_STORAGE_KEY) === "h264" ? "h264" : "image"; } catch { streamRef.current = "image"; }
 
     function disposeConnection() {
       clearTimeout(connectTimer);
@@ -88,6 +93,7 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
       try { old?.rfb.disconnect(); } catch (err) {
         console.debug("[vnc] disconnect cleanup failed:", err);
       }
+      old?.dispose?.();
     }
 
     function fail(message: string) {
@@ -123,7 +129,10 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
           }
         }
         if (controller.signal.aborted) return;
-        const created = await createViewer(implementation, containerRef.current!, keyboardRef.current!, profileId, controller.signal);
+        const created = await createViewer(implementation, containerRef.current!, keyboardRef.current!, profileId, controller.signal, {
+          streamMode: streamRef.current,
+          onStreamState: (state) => { if (!controller.signal.aborted) setStreamState(state); },
+        });
         if (!created) return;
         connection = created;
         connectionRef.current = created;
@@ -142,9 +151,15 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
           onDisconnectRef.current();
         };
         const handleSecurity = () => fail("Viewer access denied. Sign in again or select Compatibility mode.");
+        const handleEncodingFailure = () => {
+          streamRef.current = "image";
+          retry();
+        };
         const listeners: Array<[string, () => void]> = [
           ["connect", handleConnect], ["disconnect", handleDisconnect],
           ["securityfailure", handleSecurity], ["credentialsrequired", handleSecurity],
+          ["badencoding", handleEncodingFailure],
+          ["imagemode", () => { streamRef.current = "image"; }],
         ];
         for (const [type, listener] of listeners) created.rfb.addEventListener(type, listener);
         detach = () => {
@@ -153,7 +168,9 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         connectTimer = setTimeout(retry, 12000);
       } catch (err) {
         if (controller.signal.aborted) return;
-        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) {
+        if (err instanceof ViewerVersionError) {
+          fail(err.message);
+        } else if (err instanceof ApiError && [401, 403, 404].includes(err.status)) {
           fail(err.status === 404 ? "Profile no longer exists." : "Access expired or this Profile is no longer assigned to you.");
         } else {
           retry();
@@ -349,6 +366,22 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
             <option value="kasm">KasmVNC</option>
             <option value="novnc">Compatibility</option>
           </select>
+          {implementation === "kasm" && streamState.enabled && (
+            <select
+              aria-label="Stream mode"
+              value={streamState.mode}
+              onChange={(event) => {
+                const mode = event.target.value as ViewerStreamMode;
+                streamRef.current = mode;
+                try { localStorage.setItem(STREAM_STORAGE_KEY, mode); } catch { /* Optional preference. */ }
+                connectionRef.current?.applyStream?.(mode);
+              }}
+              className="rounded border border-border bg-surface-2 px-2 py-1 text-xs text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <option value="image">Image mode</option>
+              <option value="h264" disabled={!streamState.available}>Smooth video</option>
+            </select>
+          )}
           <div className="flex items-center gap-1 mr-1" title="Viewer quality">
             <Gauge className="h-3.5 w-3.5 text-gray-500" />
             <div className="flex overflow-hidden rounded border border-border">
@@ -403,6 +436,9 @@ export function ProfileViewer({ profileId, cdpUrl, clipboardSync: initialClipboa
         </div>
       </div>
 
+      {streamState.message && implementation === "kasm" && (
+        <p role="status" className="px-3 py-1 text-xs text-gray-400">{streamState.message}</p>
+      )}
       {error && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-1 px-3 py-2">
           <p role="alert" className="text-sm text-gray-300">{error}</p>

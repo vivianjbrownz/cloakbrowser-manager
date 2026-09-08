@@ -47,7 +47,9 @@ const mocks = vi.hoisted(() => {
 
   return {
     MockRFB,
+    supportsH264: vi.fn(),
     api: {
+      authStatus: vi.fn(),
       getClipboard: vi.fn(),
       setClipboard: vi.fn(),
       getProfileStatus: vi.fn(),
@@ -60,6 +62,7 @@ vi.mock("@novnc/novnc/core/rfb.js", () => ({
 }));
 
 vi.mock("../vendor/kasmvnc/core/rfb.js", () => ({ default: mocks.MockRFB }));
+vi.mock("../lib/kasmVideo", () => ({ supportsH264: mocks.supportsH264 }));
 
 vi.mock("../lib/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("../lib/api")>(),
@@ -90,6 +93,8 @@ async function renderConnected(clipboardSync = false) {
 
 beforeEach(() => {
   mocks.MockRFB.instances = [];
+  mocks.api.authStatus.mockReset().mockResolvedValue({ kasmvnc_version: "1.5.0", kasm_video_enabled: false });
+  mocks.supportsH264.mockReset().mockResolvedValue(false);
   mocks.api.getClipboard.mockReset().mockResolvedValue({ text: "" });
   mocks.api.setClipboard.mockReset().mockResolvedValue({ ok: true });
   mocks.api.getProfileStatus.mockReset().mockResolvedValue({ status: "running" });
@@ -109,6 +114,34 @@ afterEach(() => {
 });
 
 describe("ProfileViewer quality mode", () => {
+  it("refuses a mismatched native runtime without a reconnect loop", async () => {
+    mocks.api.authStatus.mockResolvedValue({ kasmvnc_version: "1.3.3" });
+    localStorage.setItem("cloakbrowser.viewer.implementation", "kasm");
+    render(<ProfileViewer profileId="p" cdpUrl={null} clipboardSync={false} onDisconnect={vi.fn()} />);
+    expect((await screen.findByRole("alert")).textContent).toContain("Refresh this page");
+    expect(mocks.MockRFB.instances).toHaveLength(0);
+    expect(mocks.api.authStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("negotiates video before enabling it and falls back without restarting Chrome", async () => {
+    mocks.api.authStatus.mockResolvedValue({ kasmvnc_version: "1.5.0", kasm_video_enabled: true });
+    mocks.supportsH264.mockResolvedValue(true);
+    localStorage.setItem("cloakbrowser.viewer.implementation", "kasm");
+    const rfb = await renderConnected();
+    const stream = await screen.findByRole("combobox", { name: "Stream mode" });
+    expect((screen.getByRole("option", { name: "Smooth video" }) as HTMLOptionElement).disabled).toBe(true);
+    Object.assign(rfb, { videoCodecConfigurations: { [-1027]: { presets: [9, 18, 25, 39, 50] } } });
+    act(() => rfb.emit("videocodecschange"));
+    fireEvent.change(stream, { target: { value: "h264" } });
+    expect((stream as HTMLSelectElement).value).toBe("h264");
+    expect(rfb).toHaveProperty("streamMode", -1027);
+    expect(rfb).toHaveProperty("frameRate", 30);
+    expect(rfb.resizeSession).toBe(false);
+    act(() => rfb.emit("imagemode"));
+    expect((stream as HTMLSelectElement).value).toBe("image");
+    expect(rfb.disconnect).not.toHaveBeenCalled();
+    expect(rfb).toHaveProperty("streamMode", -1025);
+  });
   it("uses fast mode by default", async () => {
     const rfb = await renderConnected();
 
