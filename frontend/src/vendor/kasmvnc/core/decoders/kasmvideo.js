@@ -123,8 +123,9 @@ export default class KasmVideoDecoder {
 
     _handleDecoderError() {
         Log.Error('Decoder error triggered - clearing all decoders and switching to image mode');
-        // We need to reset the decoders
-        this._decoders.clear();
+        // Release decoder resources and pending timestamps before falling back.
+        // Clearing the map alone would orphan live decoders and late frames.
+        this.dispose();
         this._rfb.dispatchEvent(new CustomEvent('imagemode'));
     }
 

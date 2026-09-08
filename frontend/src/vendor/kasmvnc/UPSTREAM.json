@@ -59,7 +59,7 @@
     "package.json": "a266f059b0e0fcf0c703f890055ab9321a91f743f91068b2a7a5662df9e28653"
   },
   "patched_files": {
-    "core/decoders/kasmvideo.js": "73d7d59416f37634b0db6a66db01a21506229ffa60c49e77eb517d0dbe8fb614",
+    "core/decoders/kasmvideo.js": "0c4ec0ef05d75fa2c5ad67450cb5256dbbbe0844c6b3255bedf544b75c04c206",
     "core/decoders/qoi/decoder.js": "09ed21a76ed92816b1d7bcec9e4be58c28814e06c96de406d1b5c5e41454e897",
     "core/display.js": "8ea78713d3a7fc52b5ef79a8d9366a1970cf4fcadbfa4faeb005bbb65923af86",
     "core/rfb.d.ts": "ca460e6f76b5e0d14c79819373e7aa9fcb57a5500bbe7ebb6345b94b4b23fc57",

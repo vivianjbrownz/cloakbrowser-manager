@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import KasmRFB from "../vendor/kasmvnc/core/rfb.js";
 import Websock from "../vendor/kasmvnc/core/websock.js";
+import KasmVideoDecoder from "../vendor/kasmvnc/core/decoders/kasmvideo.js";
 
 const handle = (KasmRFB.prototype as any)._handleServerVideoEncoders;
 function fixture(bytes: Uint8Array) {
@@ -39,4 +40,22 @@ describe("KasmVNC encoder negotiation", () => {
       expect(client.videoCodecConfigurations[-1027].presets).toEqual([9, 18, 25, 39, 50]);
     }
   });
+});
+
+it("releases video resources on fallback and closes late frames without repainting", () => {
+  const rfb = { dispatchEvent: vi.fn() };
+  const display = { videoFrameRect: vi.fn() };
+  const decoder = new KasmVideoDecoder(rfb, display);
+  const close = vi.fn();
+  decoder._decoders.set(0, { decoder: { state: "configured", close } });
+  decoder._decoders.set(1, { decoder: { state: "closed", close } });
+  decoder._timestampMap.set(42, { screenId: 0 });
+  decoder._handleDecoderError();
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(decoder._timestampMap.size).toBe(0);
+  expect(rfb.dispatchEvent.mock.calls[0][0].type).toBe("imagemode");
+  const frame = { timestamp: 42, close: vi.fn() };
+  decoder._handleProcessVideoChunk(frame);
+  expect(frame.close).toHaveBeenCalledOnce();
+  expect(display.videoFrameRect).not.toHaveBeenCalled();
 });
