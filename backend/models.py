@@ -274,6 +274,8 @@ class StatusResponse(BaseModel):
     running_count: int
     binary_version: str
     profiles_total: int
+    kasmvnc_version: str | None = None
+    kasm_video_enabled: bool = False
 
 
 class ProfileStatusResponse(BaseModel):

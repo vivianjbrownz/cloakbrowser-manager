@@ -1374,12 +1374,15 @@ async def open_profile_url(profile_id: str, body: ProfileOpenUrlRequest):
 @app.get("/api/status", response_model=StatusResponse)
 async def get_system_status():
     from cloakbrowser.config import CHROMIUM_VERSION
+    from .vnc_manager import kasmvnc_version
 
     profiles = db.list_profiles()
     return StatusResponse(
         running_count=len(browser_mgr.running),
         binary_version=CHROMIUM_VERSION,
         profiles_total=len(profiles),
+        kasmvnc_version=kasmvnc_version(),
+        kasm_video_enabled=KASM_VIDEO_ENABLED and kasmvnc_version() == "1.5.0",
     )
 
 
