@@ -1,0 +1,15 @@
+{
+  "authenticated_user_ingress_tested": false,
+  "responses": [
+    {
+      "domain": "browser.beginos.org",
+      "status_code": 302,
+      "redirect_host": "beginsource.cloudflareaccess.com"
+    },
+    {
+      "domain": "browser-agentos.beginos.org",
+      "status_code": 302,
+      "redirect_host": "beginsource.cloudflareaccess.com"
+    }
+  ]
+}

@@ -1,5 +1,10 @@
 # KasmVNC deployment validation — 2026-09-07
 
+KasmVNC 1.5.0 superseded this release on 2026-09-08. See the
+[current validation record](validation/kasm15/README.md) for its successful
+deployment, Compatibility default, disabled H.264 and ongoing observation.
+The remaining sections record the historical 1.3.3 deployment.
+
 The native KasmVNC client is deployed on the existing Manager server and can be
 selected from the viewer toolbar. **Compatibility remains the default.** The
 measured performance has not justified changing that default or claiming that

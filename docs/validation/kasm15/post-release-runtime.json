@@ -1,0 +1,13 @@
+{
+  "verified_at": 1788843481.6702693,
+  "environment_and_secrets_preserved": true,
+  "mounts_preserved": true,
+  "changed_runtime_options": [],
+  "data_backup_present": true,
+  "backup_directory_mode": "0o700",
+  "image_id": "sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "healthy": true,
+  "observer_active": true,
+  "previous_observer_superseded": true,
+  "observation_complete": false
+}

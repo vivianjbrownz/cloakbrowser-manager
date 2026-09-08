@@ -1,0 +1,22 @@
+{
+  "workload": "One tab per Profile; background DOM update every 5 seconds; 3 active viewers",
+  "steps": [
+    {
+      "total": 5,
+      "passed": true,
+      "report": "capacity-5.json"
+    },
+    {
+      "total": 10,
+      "passed": true,
+      "report": "capacity-10.json"
+    },
+    {
+      "total": 20,
+      "passed": false,
+      "error": "QA failed; inspect /tmp/cloak-kasm15-qa/capacity/capacity-20.log",
+      "report": "capacity-20.json"
+    }
+  ],
+  "completed_20": false
+}

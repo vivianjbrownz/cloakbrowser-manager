@@ -154,6 +154,13 @@ async def run(args):
                                         await context.add_cookies([{"name": "auth_token", "value": token, "url": args.base_url}])
                                     await context.add_init_script(f"localStorage.setItem('cloakbrowser.viewer.implementation', {json.dumps(mode)});localStorage.setItem('cloakbrowser.viewer.qualityMode','fast');localStorage.setItem('cloakbrowser.viewer.streamMode',{json.dumps(args.stream_mode)})")
                                     await context.add_init_script("""window.__qaSockets=[];
+                                      window.__qaVideoDecodeCalls=0;
+                                      if(typeof VideoDecoder!=='undefined'){
+                                        const decode=VideoDecoder.prototype.decode;
+                                        VideoDecoder.prototype.decode=function(chunk){
+                                          window.__qaVideoDecodeCalls++;return decode.call(this,chunk);
+                                        };
+                                      }
                                       window.WebSocket=new Proxy(window.WebSocket,{construct(Target,args){
                                         const socket=new Target(...args);window.__qaSockets.push(socket);return socket;
                                       }});""")
@@ -217,6 +224,7 @@ async def run(args):
                                     await target.locator("#text").focus()
                                     await page.wait_for_timeout(200)
                                     results = {"visibility": await page.evaluate("document.visibilityState"), "marker_pixel": point}
+                                    video_decode_start = await page.evaluate("window.__qaVideoDecodeCalls")
                                     for action, event in [("click", "mousedown"), ("typing", "keydown"), ("scroll", "wheel")]:
                                         if action == "typing":
                                             await target.locator("#text").focus()
@@ -238,6 +246,9 @@ async def run(args):
                                         results[action] = summarize(samples)
                                     assert await target.locator("#text").input_value() == "a" * args.samples, "Lost or duplicated typing"
                                     assert await target.evaluate("scrollY") > 0, "Scroll did not reach the browser"
+                                    results["video_decode_calls_during_measurement"] = await page.evaluate("window.__qaVideoDecodeCalls")-video_decode_start
+                                    if args.stream_mode == "h264":
+                                        assert results["video_decode_calls_during_measurement"] > 0, "No streamed video was decoded during measurement"
                                     after = await target.evaluate(FINGERPRINT)
                                     assert after == before[index], "Viewer changed browser fingerprint/geometry"
                                     results["first_scroll_received"] = first_scroll_received
@@ -343,6 +354,19 @@ async def run(args):
                                     for i, target in enumerate(remote_pages[:concurrency]):
                                         assert await target.locator("#text").input_value() == f"Profile {i} 独立剪贴板"
                                     functional["concurrent_input_clipboard_isolation"] = True
+                                    if args.stream_mode == "h264":
+                                        page, target = pages[0], remote_pages[0]
+                                        for stream in ("image", "h264"):
+                                            await page.get_by_role("combobox", name="Stream mode").select_option(stream)
+                                            await page.wait_for_function("mode => document.querySelector('[aria-label=\"Stream mode\"]').value === mode", arg=stream)
+                                            await target.locator("#text").focus()
+                                            await page.get_by_role("textbox", name="Remote browser keyboard").focus()
+                                            await page.evaluate(ARM_SAMPLE, {**measurements[0]["marker_pixel"], "eventType": "keydown"})
+                                            await page.keyboard.press("ArrowDown")
+                                            await page.evaluate("window.__viewerSample")
+                                            assert await target.evaluate(FINGERPRINT) == before[0]
+                                            assert await target.evaluate("localStorage.getItem('viewer-qa-session')") == "preserved"
+                                        functional["stream_switch_session_preserved"] = True
                                 if mode == "kasm" and args.soak_seconds and concurrency == max(args.concurrency):
                                     soak_feedback = [[] for _ in pages]
                                     soak_started = time.monotonic()

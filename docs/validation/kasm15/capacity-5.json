@@ -1,0 +1,709 @@
+{
+  "run_id": "c96641f0701a43508aaa68759cc2ccd7",
+  "base_url": "http://127.0.0.1:18981",
+  "timestamp_utc": "2026-09-08T04:32:36Z",
+  "cases": [
+    {
+      "concurrency": 3,
+      "mode": "kasm",
+      "stream_mode": "image",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "marker_pixel": {
+            "x": 72,
+            "y": 192
+          },
+          "click": {
+            "samples": 5,
+            "median_ms": 222.3,
+            "p95_ms": 443,
+            "max_ms": 443,
+            "raw_ms": [
+              222.3,
+              176.2,
+              188.8,
+              443,
+              230
+            ]
+          },
+          "typing": {
+            "samples": 5,
+            "median_ms": 191.4,
+            "p95_ms": 289.5,
+            "max_ms": 289.5,
+            "raw_ms": [
+              289.5,
+              156.2,
+              239.9,
+              191.4,
+              184.6
+            ]
+          },
+          "scroll": {
+            "samples": 5,
+            "median_ms": 241.9,
+            "p95_ms": 581.6,
+            "max_ms": 581.6,
+            "raw_ms": [
+              282.1,
+              136.3,
+              241.9,
+              158,
+              581.6
+            ]
+          },
+          "video_decode_calls_during_measurement": 0,
+          "first_scroll_received": false,
+          "first_click_received": true,
+          "first_input_receipt_timeout_ms": 2000
+        },
+        {
+          "visibility": "visible",
+          "marker_pixel": {
+            "x": 72,
+            "y": 192
+          },
+          "click": {
+            "samples": 5,
+            "median_ms": 269.7,
+            "p95_ms": 430.3,
+            "max_ms": 430.3,
+            "raw_ms": [
+              182.7,
+              216.5,
+              430.3,
+              269.7,
+              290.3
+            ]
+          },
+          "typing": {
+            "samples": 5,
+            "median_ms": 158.3,
+            "p95_ms": 284.3,
+            "max_ms": 284.3,
+            "raw_ms": [
+              284.3,
+              147.8,
+              200.3,
+              125.4,
+              158.3
+            ]
+          },
+          "scroll": {
+            "samples": 5,
+            "median_ms": 381.1,
+            "p95_ms": 706.6,
+            "max_ms": 706.6,
+            "raw_ms": [
+              673.4,
+              226.1,
+              165.4,
+              706.6,
+              381.1
+            ]
+          },
+          "video_decode_calls_during_measurement": 0,
+          "first_scroll_received": false,
+          "first_click_received": true,
+          "first_input_receipt_timeout_ms": 2000
+        },
+        {
+          "visibility": "visible",
+          "marker_pixel": {
+            "x": 72,
+            "y": 192
+          },
+          "click": {
+            "samples": 5,
+            "median_ms": 259.4,
+            "p95_ms": 390.4,
+            "max_ms": 390.4,
+            "raw_ms": [
+              200.4,
+              191.8,
+              259.4,
+              390.4,
+              319.3
+            ]
+          },
+          "typing": {
+            "samples": 5,
+            "median_ms": 198.8,
+            "p95_ms": 261.8,
+            "max_ms": 261.8,
+            "raw_ms": [
+              261.8,
+              153.2,
+              172.8,
+              241.2,
+              198.8
+            ]
+          },
+          "scroll": {
+            "samples": 5,
+            "median_ms": 435.4,
+            "p95_ms": 672.1,
+            "max_ms": 672.1,
+            "raw_ms": [
+              672.1,
+              329.8,
+              435.4,
+              436.1,
+              412.5
+            ]
+          },
+          "video_decode_calls_during_measurement": 0,
+          "first_scroll_received": false,
+          "first_click_received": true,
+          "first_input_receipt_timeout_ms": 2000
+        }
+      ],
+      "wire": {
+        "sent": 3892,
+        "received": 1692864,
+        "closed": 0
+      },
+      "measured_wire": {
+        "sent": 1185,
+        "received": 117211,
+        "closed": 0
+      },
+      "measurement_started_at": 1788841999.9885905,
+      "measurement_ended_at": 1788842012.285644,
+      "measured_seconds": 12.297,
+      "fingerprints": [
+        {
+          "canvas": "00f191a160de5bcb14df230a3e9647a5337d21baa8e61376f8602e379203cc5e",
+          "webgl": {
+            "vendor": "Google Inc. (NVIDIA)",
+            "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4050 Laptop GPU (0x000028E1) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+            "extensions": [
+              "ANGLE_instanced_arrays",
+              "EXT_blend_minmax",
+              "EXT_clip_control",
+              "EXT_color_buffer_half_float",
+              "EXT_depth_clamp",
+              "EXT_disjoint_timer_query",
+              "EXT_float_blend",
+              "EXT_frag_depth",
+              "EXT_polygon_offset_clamp",
+              "EXT_shader_texture_lod",
+              "EXT_texture_compression_bptc",
+              "EXT_texture_compression_rgtc",
+              "EXT_texture_filter_anisotropic",
+              "EXT_texture_mirror_clamp_to_edge",
+              "EXT_sRGB",
+              "OES_element_index_uint",
+              "OES_fbo_render_mipmap",
+              "OES_standard_derivatives",
+              "OES_texture_float",
+              "OES_texture_float_linear",
+              "OES_texture_half_float",
+              "OES_texture_half_float_linear",
+              "OES_vertex_array_object",
+              "WEBGL_color_buffer_float",
+              "WEBGL_compressed_texture_s3tc",
+              "WEBGL_compressed_texture_s3tc_srgb",
+              "WEBGL_debug_renderer_info",
+              "WEBGL_debug_shaders",
+              "WEBGL_depth_texture",
+              "WEBGL_draw_buffers",
+              "WEBGL_lose_context",
+              "WEBGL_multi_draw",
+              "WEBGL_polygon_mode"
+            ]
+          },
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+          "platform": "Win32",
+          "hardwareConcurrency": 8,
+          "screen": [
+            1280,
+            900,
+            24
+          ],
+          "viewport": [
+            1280,
+            767
+          ],
+          "locale": "en-US",
+          "timezone": "UTC"
+        },
+        {
+          "canvas": "7d1a07b0a0ce55615baf87e528ff38ffbfad608e84167f5a66a2bb93e584f53c",
+          "webgl": {
+            "vendor": "Google Inc. (NVIDIA)",
+            "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Ti Laptop GPU (0x00002420) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+            "extensions": [
+              "ANGLE_instanced_arrays",
+              "EXT_blend_minmax",
+              "EXT_clip_control",
+              "EXT_color_buffer_half_float",
+              "EXT_depth_clamp",
+              "EXT_disjoint_timer_query",
+              "EXT_float_blend",
+              "EXT_frag_depth",
+              "EXT_polygon_offset_clamp",
+              "EXT_shader_texture_lod",
+              "EXT_texture_compression_bptc",
+              "EXT_texture_compression_rgtc",
+              "EXT_texture_filter_anisotropic",
+              "EXT_texture_mirror_clamp_to_edge",
+              "EXT_sRGB",
+              "OES_element_index_uint",
+              "OES_fbo_render_mipmap",
+              "OES_standard_derivatives",
+              "OES_texture_float",
+              "OES_texture_float_linear",
+              "OES_texture_half_float",
+              "OES_texture_half_float_linear",
+              "OES_vertex_array_object",
+              "WEBGL_color_buffer_float",
+              "WEBGL_compressed_texture_s3tc",
+              "WEBGL_compressed_texture_s3tc_srgb",
+              "WEBGL_debug_renderer_info",
+              "WEBGL_debug_shaders",
+              "WEBGL_depth_texture",
+              "WEBGL_draw_buffers",
+              "WEBGL_lose_context",
+              "WEBGL_multi_draw",
+              "WEBGL_polygon_mode"
+            ]
+          },
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+          "platform": "Win32",
+          "hardwareConcurrency": 8,
+          "screen": [
+            1280,
+            900,
+            24
+          ],
+          "viewport": [
+            1280,
+            767
+          ],
+          "locale": "en-US",
+          "timezone": "UTC"
+        },
+        {
+          "canvas": "1e4e65126b5e67f9a5f307d02fd7aeb8106582d3f55daa48457ee8a606a8853f",
+          "webgl": {
+            "vendor": "Google Inc. (NVIDIA)",
+            "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Laptop GPU (0x00002520) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+            "extensions": [
+              "ANGLE_instanced_arrays",
+              "EXT_blend_minmax",
+              "EXT_clip_control",
+              "EXT_color_buffer_half_float",
+              "EXT_depth_clamp",
+              "EXT_disjoint_timer_query",
+              "EXT_float_blend",
+              "EXT_frag_depth",
+              "EXT_polygon_offset_clamp",
+              "EXT_shader_texture_lod",
+              "EXT_texture_compression_bptc",
+              "EXT_texture_compression_rgtc",
+              "EXT_texture_filter_anisotropic",
+              "EXT_texture_mirror_clamp_to_edge",
+              "EXT_sRGB",
+              "OES_element_index_uint",
+              "OES_fbo_render_mipmap",
+              "OES_standard_derivatives",
+              "OES_texture_float",
+              "OES_texture_float_linear",
+              "OES_texture_half_float",
+              "OES_texture_half_float_linear",
+              "OES_vertex_array_object",
+              "WEBGL_color_buffer_float",
+              "WEBGL_compressed_texture_s3tc",
+              "WEBGL_compressed_texture_s3tc_srgb",
+              "WEBGL_debug_renderer_info",
+              "WEBGL_debug_shaders",
+              "WEBGL_depth_texture",
+              "WEBGL_draw_buffers",
+              "WEBGL_lose_context",
+              "WEBGL_multi_draw",
+              "WEBGL_polygon_mode"
+            ]
+          },
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+          "platform": "Win32",
+          "hardwareConcurrency": 8,
+          "screen": [
+            1280,
+            900,
+            24
+          ],
+          "viewport": [
+            1280,
+            767
+          ],
+          "locale": "en-US",
+          "timezone": "UTC"
+        }
+      ],
+      "background_profiles": 2,
+      "functional": {
+        "chinese_composition": true,
+        "paste_once_without_sync": true,
+        "copy_remote_to_host": true,
+        "quality_fullscreen_session_preserved": true,
+        "reconnect_without_browser_restart": true,
+        "mobile_container_resize_without_remote_resize": true,
+        "concurrent_input_clipboard_isolation": true
+      },
+      "fingerprint_unchanged": true
+    }
+  ],
+  "errors": [],
+  "soak_seconds": 60.0,
+  "network_label": "automation-host",
+  "stream_mode": "image",
+  "note": "Automation host measurements; not a substitute for the user's network/device.",
+  "image_id": "sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "server": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 0,
+    "kasmvnc_version": "1.5.0",
+    "kasm_video_enabled": false
+  },
+  "viewer": {
+    "auth_required": true,
+    "authenticated": true,
+    "role": "admin",
+    "viewer_default": "novnc",
+    "kasmvnc_version": "1.5.0",
+    "kasm_video_enabled": false
+  },
+  "client": {
+    "browser": "149.0.7827.114",
+    "cpu_count": 4,
+    "viewport": {
+      "width": 1500,
+      "height": 1100
+    }
+  },
+  "launched_profiles": 5,
+  "soak_painted_feedback": [
+    {
+      "samples": 2,
+      "median_ms": 121.6,
+      "p95_ms": 130.5,
+      "max_ms": 130.5,
+      "raw_ms": [
+        130.5,
+        112.6
+      ]
+    },
+    {
+      "samples": 2,
+      "median_ms": 125.9,
+      "p95_ms": 131.4,
+      "max_ms": 131.4,
+      "raw_ms": [
+        131.4,
+        120.5
+      ]
+    },
+    {
+      "samples": 2,
+      "median_ms": 145.9,
+      "p95_ms": 158.5,
+      "max_ms": 158.5,
+      "raw_ms": [
+        158.5,
+        133.3
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "at": 1788841956.2995353,
+      "CPUPerc": "1.07%",
+      "MemUsage": "69.54MiB / 7.755GiB",
+      "MemPerc": "0.88%",
+      "PIDs": "9"
+    },
+    {
+      "at": 1788841959.4167676,
+      "CPUPerc": "0.51%",
+      "MemUsage": "69.54MiB / 7.755GiB",
+      "MemPerc": "0.88%",
+      "PIDs": "9"
+    },
+    {
+      "at": 1788841962.6218984,
+      "CPUPerc": "179.77%",
+      "MemUsage": "221.6MiB / 7.755GiB",
+      "MemPerc": "2.79%",
+      "PIDs": "42"
+    },
+    {
+      "at": 1788841965.7233737,
+      "CPUPerc": "184.24%",
+      "MemUsage": "315.8MiB / 7.755GiB",
+      "MemPerc": "3.98%",
+      "PIDs": "114"
+    },
+    {
+      "at": 1788841968.8081715,
+      "CPUPerc": "167.87%",
+      "MemUsage": "435.9MiB / 7.755GiB",
+      "MemPerc": "5.49%",
+      "PIDs": "124"
+    },
+    {
+      "at": 1788841972.009048,
+      "CPUPerc": "163.94%",
+      "MemUsage": "573.1MiB / 7.755GiB",
+      "MemPerc": "7.22%",
+      "PIDs": "220"
+    },
+    {
+      "at": 1788841975.335612,
+      "CPUPerc": "317.40%",
+      "MemUsage": "670.7MiB / 7.755GiB",
+      "MemPerc": "8.45%",
+      "PIDs": "230"
+    },
+    {
+      "at": 1788841978.5286417,
+      "CPUPerc": "201.06%",
+      "MemUsage": "836.6MiB / 7.755GiB",
+      "MemPerc": "10.54%",
+      "PIDs": "328"
+    },
+    {
+      "at": 1788841981.7069845,
+      "CPUPerc": "204.61%",
+      "MemUsage": "1017MiB / 7.755GiB",
+      "MemPerc": "12.81%",
+      "PIDs": "358"
+    },
+    {
+      "at": 1788841984.9363163,
+      "CPUPerc": "255.42%",
+      "MemUsage": "1.082GiB / 7.755GiB",
+      "MemPerc": "13.95%",
+      "PIDs": "434"
+    },
+    {
+      "at": 1788841988.1427147,
+      "CPUPerc": "154.42%",
+      "MemUsage": "1.22GiB / 7.755GiB",
+      "MemPerc": "15.73%",
+      "PIDs": "454"
+    },
+    {
+      "at": 1788841991.446776,
+      "CPUPerc": "185.61%",
+      "MemUsage": "1.366GiB / 7.755GiB",
+      "MemPerc": "17.61%",
+      "PIDs": "538"
+    },
+    {
+      "at": 1788841994.6328712,
+      "CPUPerc": "22.15%",
+      "MemUsage": "1.373GiB / 7.755GiB",
+      "MemPerc": "17.71%",
+      "PIDs": "537"
+    },
+    {
+      "at": 1788841997.8821397,
+      "CPUPerc": "41.20%",
+      "MemUsage": "1.393GiB / 7.755GiB",
+      "MemPerc": "17.96%",
+      "PIDs": "546"
+    },
+    {
+      "at": 1788842001.2286098,
+      "CPUPerc": "111.57%",
+      "MemUsage": "1.416GiB / 7.755GiB",
+      "MemPerc": "18.26%",
+      "PIDs": "549"
+    },
+    {
+      "at": 1788842004.4627705,
+      "CPUPerc": "230.91%",
+      "MemUsage": "1.436GiB / 7.755GiB",
+      "MemPerc": "18.52%",
+      "PIDs": "554"
+    },
+    {
+      "at": 1788842007.6571765,
+      "CPUPerc": "135.61%",
+      "MemUsage": "1.446GiB / 7.755GiB",
+      "MemPerc": "18.65%",
+      "PIDs": "554"
+    },
+    {
+      "at": 1788842010.894912,
+      "CPUPerc": "338.12%",
+      "MemUsage": "1.446GiB / 7.755GiB",
+      "MemPerc": "18.65%",
+      "PIDs": "555"
+    },
+    {
+      "at": 1788842014.2348938,
+      "CPUPerc": "226.47%",
+      "MemUsage": "1.451GiB / 7.755GiB",
+      "MemPerc": "18.71%",
+      "PIDs": "556"
+    },
+    {
+      "at": 1788842017.456727,
+      "CPUPerc": "64.61%",
+      "MemUsage": "1.445GiB / 7.755GiB",
+      "MemPerc": "18.63%",
+      "PIDs": "556"
+    },
+    {
+      "at": 1788842020.635976,
+      "CPUPerc": "136.88%",
+      "MemUsage": "1.453GiB / 7.755GiB",
+      "MemPerc": "18.74%",
+      "PIDs": "559"
+    },
+    {
+      "at": 1788842023.7341855,
+      "CPUPerc": "68.30%",
+      "MemUsage": "1.45GiB / 7.755GiB",
+      "MemPerc": "18.70%",
+      "PIDs": "560"
+    },
+    {
+      "at": 1788842026.9755147,
+      "CPUPerc": "74.56%",
+      "MemUsage": "1.45GiB / 7.755GiB",
+      "MemPerc": "18.69%",
+      "PIDs": "560"
+    },
+    {
+      "at": 1788842030.152183,
+      "CPUPerc": "69.92%",
+      "MemUsage": "1.447GiB / 7.755GiB",
+      "MemPerc": "18.66%",
+      "PIDs": "561"
+    },
+    {
+      "at": 1788842033.2697132,
+      "CPUPerc": "63.48%",
+      "MemUsage": "1.445GiB / 7.755GiB",
+      "MemPerc": "18.64%",
+      "PIDs": "561"
+    },
+    {
+      "at": 1788842036.380939,
+      "CPUPerc": "65.18%",
+      "MemUsage": "1.453GiB / 7.755GiB",
+      "MemPerc": "18.74%",
+      "PIDs": "561"
+    },
+    {
+      "at": 1788842039.474913,
+      "CPUPerc": "104.02%",
+      "MemUsage": "1.442GiB / 7.755GiB",
+      "MemPerc": "18.60%",
+      "PIDs": "561"
+    },
+    {
+      "at": 1788842042.7070758,
+      "CPUPerc": "105.16%",
+      "MemUsage": "1.441GiB / 7.755GiB",
+      "MemPerc": "18.58%",
+      "PIDs": "562"
+    },
+    {
+      "at": 1788842045.7950149,
+      "CPUPerc": "101.67%",
+      "MemUsage": "1.44GiB / 7.755GiB",
+      "MemPerc": "18.57%",
+      "PIDs": "562"
+    },
+    {
+      "at": 1788842049.3870697,
+      "CPUPerc": "134.83%",
+      "MemUsage": "1.437GiB / 7.755GiB",
+      "MemPerc": "18.54%",
+      "PIDs": "562"
+    },
+    {
+      "at": 1788842052.4576883,
+      "CPUPerc": "85.41%",
+      "MemUsage": "1.437GiB / 7.755GiB",
+      "MemPerc": "18.54%",
+      "PIDs": "563"
+    },
+    {
+      "at": 1788842055.5415418,
+      "CPUPerc": "210.16%",
+      "MemUsage": "1.438GiB / 7.755GiB",
+      "MemPerc": "18.54%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842058.6772156,
+      "CPUPerc": "79.91%",
+      "MemUsage": "1.435GiB / 7.755GiB",
+      "MemPerc": "18.51%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842061.8050385,
+      "CPUPerc": "73.83%",
+      "MemUsage": "1.436GiB / 7.755GiB",
+      "MemPerc": "18.51%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842064.86684,
+      "CPUPerc": "65.60%",
+      "MemUsage": "1.436GiB / 7.755GiB",
+      "MemPerc": "18.52%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842068.000073,
+      "CPUPerc": "59.70%",
+      "MemUsage": "1.436GiB / 7.755GiB",
+      "MemPerc": "18.51%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842071.0808656,
+      "CPUPerc": "58.60%",
+      "MemUsage": "1.436GiB / 7.755GiB",
+      "MemPerc": "18.51%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842074.1419415,
+      "CPUPerc": "42.75%",
+      "MemUsage": "1.436GiB / 7.755GiB",
+      "MemPerc": "18.51%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842077.207843,
+      "CPUPerc": "68.03%",
+      "MemUsage": "1.44GiB / 7.755GiB",
+      "MemPerc": "18.56%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842080.330423,
+      "CPUPerc": "151.15%",
+      "MemUsage": "1.439GiB / 7.755GiB",
+      "MemPerc": "18.56%",
+      "PIDs": "564"
+    },
+    {
+      "at": 1788842083.4612217,
+      "CPUPerc": "164.50%",
+      "MemUsage": "597.6MiB / 7.755GiB",
+      "MemPerc": "7.52%",
+      "PIDs": "203"
+    }
+  ]
+}

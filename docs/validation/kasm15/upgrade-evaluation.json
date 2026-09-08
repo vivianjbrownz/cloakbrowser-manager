@@ -1,15 +1,7 @@
 {
-  "performance_passed": true,
-  "runtime": {
-    "passed": true,
-    "errors": [],
-    "package_changes": {
-      "kasmvncserver": [
-        "1.3.3-1",
-        "1.5.0-1"
-      ]
-    }
-  },
+  "passed": true,
+  "errors": [],
+  "image_id": "sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
   "comparisons": [
     {
       "concurrency": 1,
@@ -108,5 +100,15 @@
       "passed": true
     }
   ],
-  "stability_passed": true
+  "runtime": {
+    "passed": true,
+    "errors": [],
+    "package_changes": {
+      "kasmvncserver": [
+        "1.3.3-1",
+        "1.5.0-1"
+      ]
+    }
+  },
+  "default_promotion": false
 }

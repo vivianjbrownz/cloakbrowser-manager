@@ -1,0 +1,171 @@
+{
+  "run_id": "cb2da28fcd2e42358cd2a06d45a8e811",
+  "base_url": "http://127.0.0.1:18985",
+  "timestamp_utc": "2026-09-08T04:56:40Z",
+  "cases": [
+    {
+      "concurrency": 1,
+      "mode": "kasm",
+      "stream_mode": "image",
+      "measurements": [
+        {
+          "visibility": "visible",
+          "marker_pixel": {
+            "x": 72,
+            "y": 192
+          },
+          "click": {
+            "samples": 3,
+            "median_ms": 136.1,
+            "p95_ms": 205.9,
+            "max_ms": 205.9,
+            "raw_ms": [
+              205.9,
+              136.1,
+              111.1
+            ]
+          },
+          "typing": {
+            "samples": 3,
+            "median_ms": 128.9,
+            "p95_ms": 132.6,
+            "max_ms": 132.6,
+            "raw_ms": [
+              132.6,
+              112.6,
+              128.9
+            ]
+          },
+          "scroll": {
+            "samples": 3,
+            "median_ms": 116.6,
+            "p95_ms": 282.6,
+            "max_ms": 282.6,
+            "raw_ms": [
+              80.9,
+              116.6,
+              282.6
+            ]
+          },
+          "video_decode_calls_during_measurement": 0,
+          "first_scroll_received": false,
+          "first_click_received": true,
+          "first_input_receipt_timeout_ms": 2000
+        }
+      ],
+      "wire": {
+        "sent": 1892,
+        "received": 109364,
+        "closed": 0
+      },
+      "measured_wire": {
+        "sent": 259,
+        "received": 57177,
+        "closed": 0
+      },
+      "measurement_started_at": 1788843414.7807655,
+      "measurement_ended_at": 1788843421.0650618,
+      "measured_seconds": 6.284,
+      "fingerprints": [
+        {
+          "canvas": "00f191a160de5bcb14df230a3e9647a5337d21baa8e61376f8602e379203cc5e",
+          "webgl": {
+            "vendor": "Google Inc. (NVIDIA)",
+            "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4050 Laptop GPU (0x000028E1) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+            "extensions": [
+              "ANGLE_instanced_arrays",
+              "EXT_blend_minmax",
+              "EXT_clip_control",
+              "EXT_color_buffer_half_float",
+              "EXT_depth_clamp",
+              "EXT_disjoint_timer_query",
+              "EXT_float_blend",
+              "EXT_frag_depth",
+              "EXT_polygon_offset_clamp",
+              "EXT_shader_texture_lod",
+              "EXT_texture_compression_bptc",
+              "EXT_texture_compression_rgtc",
+              "EXT_texture_filter_anisotropic",
+              "EXT_texture_mirror_clamp_to_edge",
+              "EXT_sRGB",
+              "OES_element_index_uint",
+              "OES_fbo_render_mipmap",
+              "OES_standard_derivatives",
+              "OES_texture_float",
+              "OES_texture_float_linear",
+              "OES_texture_half_float",
+              "OES_texture_half_float_linear",
+              "OES_vertex_array_object",
+              "WEBGL_color_buffer_float",
+              "WEBGL_compressed_texture_s3tc",
+              "WEBGL_compressed_texture_s3tc_srgb",
+              "WEBGL_debug_renderer_info",
+              "WEBGL_debug_shaders",
+              "WEBGL_depth_texture",
+              "WEBGL_draw_buffers",
+              "WEBGL_lose_context",
+              "WEBGL_multi_draw",
+              "WEBGL_polygon_mode"
+            ]
+          },
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+          "platform": "Win32",
+          "hardwareConcurrency": 8,
+          "screen": [
+            1280,
+            900,
+            24
+          ],
+          "viewport": [
+            1280,
+            767
+          ],
+          "locale": "en-US",
+          "timezone": "UTC"
+        }
+      ],
+      "background_profiles": 0,
+      "functional": {
+        "chinese_composition": true,
+        "paste_once_without_sync": true,
+        "copy_remote_to_host": true,
+        "quality_fullscreen_session_preserved": true,
+        "reconnect_without_browser_restart": true,
+        "mobile_container_resize_without_remote_resize": true,
+        "concurrent_input_clipboard_isolation": true
+      },
+      "fingerprint_unchanged": true
+    }
+  ],
+  "errors": [],
+  "soak_seconds": 0,
+  "network_label": "post-release-ssh",
+  "stream_mode": "image",
+  "note": "Automation host measurements; not a substitute for the user's network/device.",
+  "image_id": "sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "image_id_source": "Operator supplied from the remote Docker host",
+  "server": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 13,
+    "kasmvnc_version": "1.5.0",
+    "kasm_video_enabled": false
+  },
+  "viewer": {
+    "auth_required": true,
+    "authenticated": true,
+    "role": "admin",
+    "viewer_default": "novnc",
+    "kasmvnc_version": "1.5.0",
+    "kasm_video_enabled": false
+  },
+  "client": {
+    "browser": "149.0.7827.114",
+    "cpu_count": 4,
+    "viewport": {
+      "width": 1500,
+      "height": 1100
+    }
+  },
+  "launched_profiles": 1
+}

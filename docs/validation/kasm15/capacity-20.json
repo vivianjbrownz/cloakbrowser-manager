@@ -1,0 +1,348 @@
+{
+  "run_id": "422faa38c3ff4b0e86df4e7837fe3b04",
+  "base_url": "http://127.0.0.1:18981",
+  "timestamp_utc": "2026-09-08T04:37:23Z",
+  "cases": [],
+  "errors": [
+    "RuntimeError: Capacity guard: less than 15% / 1.5 GiB host memory available"
+  ],
+  "soak_seconds": 0,
+  "network_label": "automation-host",
+  "stream_mode": "image",
+  "note": "Automation host measurements; not a substitute for the user's network/device.",
+  "image_id": "sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "server": {
+    "running_count": 0,
+    "binary_version": "146.0.7680.177.5",
+    "profiles_total": 0,
+    "kasmvnc_version": "1.5.0",
+    "kasm_video_enabled": false
+  },
+  "viewer": {
+    "auth_required": true,
+    "authenticated": true,
+    "role": "admin",
+    "viewer_default": "novnc",
+    "kasmvnc_version": "1.5.0",
+    "kasm_video_enabled": false
+  },
+  "client": {
+    "browser": "149.0.7827.114",
+    "cpu_count": 4,
+    "viewport": {
+      "width": 1500,
+      "height": 1100
+    }
+  },
+  "launched_profiles": 17,
+  "resources": [
+    {
+      "at": 1788842243.694857,
+      "CPUPerc": "1.98%",
+      "MemUsage": "75.81MiB / 7.755GiB",
+      "MemPerc": "0.95%",
+      "PIDs": "9"
+    },
+    {
+      "at": 1788842246.7899318,
+      "CPUPerc": "6.87%",
+      "MemUsage": "78.15MiB / 7.755GiB",
+      "MemPerc": "0.98%",
+      "PIDs": "10"
+    },
+    {
+      "at": 1788842249.870569,
+      "CPUPerc": "308.79%",
+      "MemUsage": "288.3MiB / 7.755GiB",
+      "MemPerc": "3.63%",
+      "PIDs": "114"
+    },
+    {
+      "at": 1788842252.9759672,
+      "CPUPerc": "249.19%",
+      "MemUsage": "378.7MiB / 7.755GiB",
+      "MemPerc": "4.77%",
+      "PIDs": "125"
+    },
+    {
+      "at": 1788842256.1510122,
+      "CPUPerc": "239.27%",
+      "MemUsage": "575.6MiB / 7.755GiB",
+      "MemPerc": "7.25%",
+      "PIDs": "221"
+    },
+    {
+      "at": 1788842259.248511,
+      "CPUPerc": "173.39%",
+      "MemUsage": "759.3MiB / 7.755GiB",
+      "MemPerc": "9.56%",
+      "PIDs": "263"
+    },
+    {
+      "at": 1788842262.6235843,
+      "CPUPerc": "203.59%",
+      "MemUsage": "870.5MiB / 7.755GiB",
+      "MemPerc": "10.96%",
+      "PIDs": "327"
+    },
+    {
+      "at": 1788842265.7599883,
+      "CPUPerc": "180.45%",
+      "MemUsage": "1.02GiB / 7.755GiB",
+      "MemPerc": "13.16%",
+      "PIDs": "392"
+    },
+    {
+      "at": 1788842268.8923323,
+      "CPUPerc": "149.38%",
+      "MemUsage": "1.113GiB / 7.755GiB",
+      "MemPerc": "14.36%",
+      "PIDs": "431"
+    },
+    {
+      "at": 1788842271.9895694,
+      "CPUPerc": "215.16%",
+      "MemUsage": "1.336GiB / 7.755GiB",
+      "MemPerc": "17.23%",
+      "PIDs": "534"
+    },
+    {
+      "at": 1788842275.0956645,
+      "CPUPerc": "156.63%",
+      "MemUsage": "1.522GiB / 7.755GiB",
+      "MemPerc": "19.62%",
+      "PIDs": "554"
+    },
+    {
+      "at": 1788842278.1820772,
+      "CPUPerc": "202.16%",
+      "MemUsage": "1.67GiB / 7.755GiB",
+      "MemPerc": "21.54%",
+      "PIDs": "647"
+    },
+    {
+      "at": 1788842281.3087907,
+      "CPUPerc": "297.34%",
+      "MemUsage": "1.85GiB / 7.755GiB",
+      "MemPerc": "23.86%",
+      "PIDs": "740"
+    },
+    {
+      "at": 1788842284.459673,
+      "CPUPerc": "187.04%",
+      "MemUsage": "1.919GiB / 7.755GiB",
+      "MemPerc": "24.75%",
+      "PIDs": "742"
+    },
+    {
+      "at": 1788842287.5275,
+      "CPUPerc": "237.88%",
+      "MemUsage": "2.126GiB / 7.755GiB",
+      "MemPerc": "27.42%",
+      "PIDs": "842"
+    },
+    {
+      "at": 1788842290.5901766,
+      "CPUPerc": "194.88%",
+      "MemUsage": "2.183GiB / 7.755GiB",
+      "MemPerc": "28.15%",
+      "PIDs": "846"
+    },
+    {
+      "at": 1788842293.7458527,
+      "CPUPerc": "249.98%",
+      "MemUsage": "2.402GiB / 7.755GiB",
+      "MemPerc": "30.98%",
+      "PIDs": "950"
+    },
+    {
+      "at": 1788842296.9049752,
+      "CPUPerc": "159.86%",
+      "MemUsage": "2.523GiB / 7.755GiB",
+      "MemPerc": "32.54%",
+      "PIDs": "960"
+    },
+    {
+      "at": 1788842300.1010423,
+      "CPUPerc": "170.50%",
+      "MemUsage": "2.688GiB / 7.755GiB",
+      "MemPerc": "34.67%",
+      "PIDs": "1054"
+    },
+    {
+      "at": 1788842303.3052802,
+      "CPUPerc": "178.75%",
+      "MemUsage": "2.834GiB / 7.755GiB",
+      "MemPerc": "36.54%",
+      "PIDs": "1071"
+    },
+    {
+      "at": 1788842306.402685,
+      "CPUPerc": "216.87%",
+      "MemUsage": "2.961GiB / 7.755GiB",
+      "MemPerc": "38.18%",
+      "PIDs": "1161"
+    },
+    {
+      "at": 1788842309.9025693,
+      "CPUPerc": "197.54%",
+      "MemUsage": "3.069GiB / 7.755GiB",
+      "MemPerc": "39.57%",
+      "PIDs": "1170"
+    },
+    {
+      "at": 1788842313.0991244,
+      "CPUPerc": "212.43%",
+      "MemUsage": "3.229GiB / 7.755GiB",
+      "MemPerc": "41.64%",
+      "PIDs": "1267"
+    },
+    {
+      "at": 1788842316.6510615,
+      "CPUPerc": "129.80%",
+      "MemUsage": "3.37GiB / 7.755GiB",
+      "MemPerc": "43.45%",
+      "PIDs": "1277"
+    },
+    {
+      "at": 1788842319.8952885,
+      "CPUPerc": "165.45%",
+      "MemUsage": "3.516GiB / 7.755GiB",
+      "MemPerc": "45.33%",
+      "PIDs": "1373"
+    },
+    {
+      "at": 1788842323.0413616,
+      "CPUPerc": "160.27%",
+      "MemUsage": "3.573GiB / 7.755GiB",
+      "MemPerc": "46.07%",
+      "PIDs": "1383"
+    },
+    {
+      "at": 1788842326.3007746,
+      "CPUPerc": "166.44%",
+      "MemUsage": "3.633GiB / 7.755GiB",
+      "MemPerc": "46.85%",
+      "PIDs": "1405"
+    },
+    {
+      "at": 1788842329.5655384,
+      "CPUPerc": "322.33%",
+      "MemUsage": "3.726GiB / 7.755GiB",
+      "MemPerc": "48.05%",
+      "PIDs": "1481"
+    },
+    {
+      "at": 1788842332.815047,
+      "CPUPerc": "188.32%",
+      "MemUsage": "3.775GiB / 7.755GiB",
+      "MemPerc": "48.68%",
+      "PIDs": "1479"
+    },
+    {
+      "at": 1788842336.604722,
+      "CPUPerc": "199.92%",
+      "MemUsage": "3.916GiB / 7.755GiB",
+      "MemPerc": "50.50%",
+      "PIDs": "1516"
+    },
+    {
+      "at": 1788842340.6914542,
+      "CPUPerc": "278.68%",
+      "MemUsage": "4.025GiB / 7.755GiB",
+      "MemPerc": "51.91%",
+      "PIDs": "1593"
+    },
+    {
+      "at": 1788842344.5230737,
+      "CPUPerc": "187.77%",
+      "MemUsage": "4.053GiB / 7.755GiB",
+      "MemPerc": "52.26%",
+      "PIDs": "1595"
+    },
+    {
+      "at": 1788842348.098354,
+      "CPUPerc": "262.89%",
+      "MemUsage": "4.163GiB / 7.755GiB",
+      "MemPerc": "53.68%",
+      "PIDs": "1616"
+    },
+    {
+      "at": 1788842351.3080738,
+      "CPUPerc": "277.17%",
+      "MemUsage": "4.243GiB / 7.755GiB",
+      "MemPerc": "54.72%",
+      "PIDs": "1700"
+    },
+    {
+      "at": 1788842354.4136379,
+      "CPUPerc": "180.05%",
+      "MemUsage": "4.288GiB / 7.755GiB",
+      "MemPerc": "55.29%",
+      "PIDs": "1702"
+    },
+    {
+      "at": 1788842357.562794,
+      "CPUPerc": "195.44%",
+      "MemUsage": "4.409GiB / 7.755GiB",
+      "MemPerc": "56.85%",
+      "PIDs": "1723"
+    },
+    {
+      "at": 1788842361.2710056,
+      "CPUPerc": "183.84%",
+      "MemUsage": "4.477GiB / 7.755GiB",
+      "MemPerc": "57.73%",
+      "PIDs": "1820"
+    },
+    {
+      "at": 1788842364.7583613,
+      "CPUPerc": "183.75%",
+      "MemUsage": "4.491GiB / 7.755GiB",
+      "MemPerc": "57.91%",
+      "PIDs": "1821"
+    },
+    {
+      "at": 1788842368.098641,
+      "CPUPerc": "188.16%",
+      "MemUsage": "4.384GiB / 7.755GiB",
+      "MemPerc": "56.53%",
+      "PIDs": "1718"
+    },
+    {
+      "at": 1788842371.440585,
+      "CPUPerc": "147.94%",
+      "MemUsage": "3.773GiB / 7.755GiB",
+      "MemPerc": "48.65%",
+      "PIDs": "1499"
+    },
+    {
+      "at": 1788842374.6016524,
+      "CPUPerc": "204.34%",
+      "MemUsage": "2.714GiB / 7.755GiB",
+      "MemPerc": "35.00%",
+      "PIDs": "1059"
+    },
+    {
+      "at": 1788842377.8909311,
+      "CPUPerc": "202.98%",
+      "MemUsage": "1.642GiB / 7.755GiB",
+      "MemPerc": "21.17%",
+      "PIDs": "625"
+    },
+    {
+      "at": 1788842381.018667,
+      "CPUPerc": "163.32%",
+      "MemUsage": "597.9MiB / 7.755GiB",
+      "MemPerc": "7.53%",
+      "PIDs": "209"
+    },
+    {
+      "at": 1788842384.1595776,
+      "CPUPerc": "1.15%",
+      "MemUsage": "95.21MiB / 7.755GiB",
+      "MemPerc": "1.20%",
+      "PIDs": "9"
+    }
+  ]
+}

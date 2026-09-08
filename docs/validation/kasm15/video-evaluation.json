@@ -1,0 +1,71 @@
+{
+  "quantitative_passed": false,
+  "errors": [
+    "Video CPU increase exceeds 10%: 1",
+    "Video latency gate failed: 1/click",
+    "Video latency gate failed: 1/scroll",
+    "Video latency gate failed: 1/typing",
+    "Video latency gate failed: 3/click",
+    "Video latency gate failed: 3/scroll",
+    "Video latency gate failed: 3/typing"
+  ],
+  "comparisons": [
+    {
+      "concurrency": 1,
+      "metric": "click",
+      "image_p95_ms": 222.7,
+      "video_p95_ms": 317.2,
+      "passed": false
+    },
+    {
+      "concurrency": 1,
+      "metric": "typing",
+      "image_p95_ms": 292.8,
+      "video_p95_ms": 552.4,
+      "passed": false
+    },
+    {
+      "concurrency": 1,
+      "metric": "scroll",
+      "image_p95_ms": 314,
+      "video_p95_ms": 365.7,
+      "passed": false
+    },
+    {
+      "concurrency": 1,
+      "metric": "container_cpu",
+      "image_mean_percent": 83.94714285714286,
+      "video_mean_percent": 94.36133333333333,
+      "passed": false
+    },
+    {
+      "concurrency": 3,
+      "metric": "click",
+      "image_p95_ms": 250.2,
+      "video_p95_ms": 729.3,
+      "passed": false
+    },
+    {
+      "concurrency": 3,
+      "metric": "typing",
+      "image_p95_ms": 491.2,
+      "video_p95_ms": 546.5,
+      "passed": false
+    },
+    {
+      "concurrency": 3,
+      "metric": "scroll",
+      "image_p95_ms": 442.3,
+      "video_p95_ms": 771.1,
+      "passed": false
+    },
+    {
+      "concurrency": 3,
+      "metric": "container_cpu",
+      "image_mean_percent": 186.19294117647058,
+      "video_mean_percent": 139.43,
+      "passed": true
+    }
+  ],
+  "enables_video": false
+}

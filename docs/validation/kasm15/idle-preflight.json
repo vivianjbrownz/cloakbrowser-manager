@@ -1,0 +1,7 @@
+{
+  "idle_seen": false,
+  "detail": "Manager still has 1 running Profiles; release deferred",
+  "started_at": 1788841081.5575845,
+  "ended_at": 1788841681.5980651,
+  "waited_seconds": 600.0
+}

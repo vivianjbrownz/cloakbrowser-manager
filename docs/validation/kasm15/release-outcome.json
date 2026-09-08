@@ -1,0 +1,18 @@
+{
+  "at": 1788842553.4417613,
+  "running_profiles": 0,
+  "profiles_total": 13,
+  "new_image": "ghcr.io/vivianjbrownz/cloakbrowser-manager@sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "upgrade_gate_passed": true,
+  "deployed": true,
+  "backup": "/opt/cloakbrowser-manager/releases/20260908T044233Z",
+  "observer_unit": "cloakbrowser-kasm15-observe-20260908",
+  "observation_complete": false,
+  "current_image_id": "sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465",
+  "healthy": true,
+  "viewer_metadata": {
+    "viewer_default": "novnc",
+    "kasmvnc_version": "1.5.0",
+    "kasm_video_enabled": false
+  }
+}

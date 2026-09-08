@@ -45,7 +45,9 @@ and fonts as part of this viewer release.
 
 ## KASM-3: Review the completed 24-hour observation
 
-Status: open until the finite observation task finishes.
+Status: superseded by KASM15-1. The 1.3.3 observer was stopped after the 1.5.0
+observer became active on 2026-09-08. Its interrupted run must not be described
+as a completed 24-hour observation of 1.3.3.
 
 The deployed observer records health, running/total Profile counts, CPU/memory
 and native proxy warnings every five minutes. It does not restart anything or
@@ -55,3 +57,39 @@ native proxy errors; record the final `observation_complete=true` entry.
 
 An idle healthy server is not proof of viewer stability under user traffic.
 Keep the real-browser stability result and user-ingress acceptance separate.
+
+## KASM15-1: Review the new 24-hour production observation
+
+Status: open; observer started after the successful 1.5.0 release.
+
+Image `sha256:fd08b668bdb9f2ec80757ac73a14c33fbd929465bc122add74f856e816fd3465`
+passed three-round version acceptance, fingerprint/isolation checks, a 30-minute
+three-viewer soak, and a post-release production smoke. The release waited for
+zero active Profiles and retained a complete data backup and old container.
+The exact evidence and observer paths are in
+[the validation record](validation/kasm15/README.md).
+
+Review the final completion record, availability changes and native proxy
+errors. The real mainland/Singapore VPN and authenticated employee ingress
+checks in KASM-1 remain open; the Compatibility default remains in effect.
+
+## KASM15-2: Optional H.264 performance
+
+Status: feature implemented and tested; production flag remains off.
+
+The separate software-video candidate passed capability probing, real decoding,
+image/video switching, clipboard and session-preservation checks. Three-round
+comparisons failed the latency gate on the automation host. Keep it disabled.
+Any later evaluation should include the user's actual decoder/GPU and network;
+do not generalize these shared-host results to every client device.
+
+## KASM15-3: Capacity above the validated light workload
+
+Status: 5/10-Profile calibration complete; 20-Profile capacity unconfirmed.
+
+The local 4-CPU / approximately 8-GiB host completed the light workload with
+three active viewers at 5 and 10 Profiles. The 20 step stopped at 17 launched
+Profiles on the memory-reserve guard, then cleaned up every owned Profile.
+This is not evidence that 17 are stable or that production can support 20
+active websites. Calibrate representative sites on the intended deployment
+hardware before increasing operational concurrency.

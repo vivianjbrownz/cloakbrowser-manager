@@ -1,0 +1,12 @@
+{
+  "backend_tests_passed": 268,
+  "frontend_tests_passed": 86,
+  "frontend_build_passed": true,
+  "vendor_files_verified": 54,
+  "viewer_ui_detector_findings": 0,
+  "ci_run": "https://github.com/vivianjbrownz/cloakbrowser-manager/actions/runs/34184822614",
+  "version_upgrade_gate_passed": true,
+  "video_enabled_in_production": false,
+  "capacity_20_verified": false,
+  "observation_24h_complete": false
+}
